@@ -1,14 +1,12 @@
 * CPSer.ss - a simple CPS transformer.
 
-* meta-interp.ss - a meta-circular interpreter (reflection
-  tower).
+* meta-interp.ss - a meta-circular interpreter (reflection tower).
 
-* infer.ss - a type inferencer for the lambda calculus. It
-  can infer infinite types (such as delta, omega, and the
-  Y-combinator).
+* infer.ss - a type inferencer for the lambda calculus. It can infer
+  infinite types (such as delta, omega, and the Y-combinator).
 
-* mk-c.ss - a modified miniKanren implementation with a
-  negation operator.
+* mk-c.ss - a modified miniKanren implementation with a negation
+  operator.
 
 * interp-call-by-need.ss - a lazy interpreter
 
