@@ -7,3 +7,8 @@
   can infer infinite types (such as delta, omega, and the
   Y-combinator).
 
+* mk-c.ss - a modified miniKanren implementation with a
+  negation operator.
+
+* interp-call-by-need.ss - a lazy interpreter
+
