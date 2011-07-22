@@ -1,9 +1,9 @@
-* CPSer - a simple CPS transformer.
+* CPSer.ss - a simple CPS transformer.
 
-* meta-circular interpreter - a meta-circular interpreter
-  (reflection tower).
+* meta-interp.ss - a meta-circular interpreter (reflection
+  tower).
 
-* inferencer - a type inferencer for the lambda calculus. It
+* infer.ss - a type inferencer for the lambda calculus. It
   can infer infinite types (such as delta, omega, and the
   Y-combinator).
 
