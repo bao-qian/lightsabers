@@ -75,14 +75,14 @@
     ((_) snull)
     ((_ e1 e2 ...) (scons e1 (make-stream e2 ...)))))
 
-(define take
+(define taken
   (lambda (n s)
     (if (and n (zero? n))
         '()
         (let ([s (defunc s)])
           (cond
            [(snull? s) '()]
-           [else (cons (scar s) (take (and n (- n 1)) (scdr s)))])))))
+           [else (cons (scar s) (taken (and n (- n 1)) (scdr s)))])))))
 
 (define smerge
   (lambda (s1 s2)
@@ -525,7 +525,7 @@
      (let ((x (var 'x)))
        (let ([ss ((ando g0 g ...) (pkg empty-s '())
                    (make-env unify-good '() (list x) '()))])
-         (take n (smap (lambda (s)
+         (taken n (smap (lambda (s)
                          (let* ((x (walk* x (pkg-subst s)))
                                 (rs (reify-s x empty-s)))
                            (list
@@ -782,4 +782,136 @@
 ;;   (constraints:
 ;;    ((noto (caro (b #1(y) d peas e) #1(y)))
 ;;     (noto (caro (a b #1(y) d peas e) #1(y)))))))
+
+
+
+
+
+;-------------------------------------------------------------
+;                     Oleg's comments (Jul 23)
+;-------------------------------------------------------------
+
+(run 5 (out)
+ (exist (y l r)
+  (== out (list y l r))
+  (rembero y l r)))
+
+;; =>
+;; '(((_.0 () ()) ())
+;;   ((_.0 (_.0 . _.1) _.1) ())
+;;   ((_.0 (_.1) (_.1)) 
+;;    (constraints: ((noto (caro (_.1) _.0)))))
+;;   ((_.0 (_.1 _.0 . _.2) (_.1 . _.2))
+;;    (constraints: ((noto (caro (_.1 _.0 . _.2) _.0)))))
+;;   ((_.0 (_.1 _.2) (_.1 _.2))
+;;    (constraints: ((noto (caro (_.2) _.0)) (noto (caro (_.1 _.2) _.0))))))
+
+
+;; Here, the constraints are really part of the answer: the answer
+;; (_.0 (_.1) (_.1)) does not make sense without the constraint that
+;; _.0 must be different from _.1. The easy way to see that (_.0 (_.1)
+;; (_.1)) is not an answer is to instantiate both variables to 1:
+
+(run 5 (out)
+ (exist (y l r)
+  (== out '(1 (1) (1)))
+  (== out (list y l r))
+  (rembero y l r)))
+
+
+;; produces (). Thus constraints must be, in general, part of the
+;; answer. Hence what I said about the need to normalize constraints
+;; applies. Here is the simple example where constraint normalization
+;; may help:
+
+(run* (out)
+  (exist (x y)
+    (== out (list x y))
+    (condc
+      ((caro (list x) y))
+      ((caro (list y) x))
+      ((caro (list y) 1))
+      ((caro (list x) 1))
+      )))
+
+;; '(((_.0 _.0) ())
+;;   ((_.0 1)
+;;    (constraints: 
+;;     ((noto (caro (list 1) _.0))
+;;      (noto (caro (list _.0) 1)))))
+;;   ((1 _.0)
+;;    (constraints:
+;;     ((noto (caro (list _.0) 1))
+;;      (noto (caro (list _.0) 1))
+;;      (noto (caro (list 1) _.0))))))
+
+
+;; The three constraints in the last answer are identical, aren't they?
+
+;; Here is why we need a genuine constraint solver.
+
+; num predicate
+(define (num x)
+ (conde
+   ((== x '()))
+   ((exist (y)
+    (== x (cons 1 y))
+    (num y)))))
+
+(run 5 (out) (num out))
+
+
+; greater-than on num
+(define (gt x y)
+ (conde
+   ((== y '()) (pairo x))
+   ((exist (x1 y1)
+     (== x (cons 1 x1))
+     (== y (cons 1 y1))
+     (gt x1 y1)))))
+
+(run* (out) (gt '(1 1 1 1) out))
+
+
+(run 1 (out)
+ (exist (x y)
+  (condc
+    ((gt x y) fail)
+    ((gt x (cons 1 y))
+     (num x) (num y) (== out 'really?)))))
+
+;; => diverges
+
+;; rewritten this way
+(run 1 (out)
+ (exist (x y)
+   (== out (list x y))
+   (num x) (num y)
+   (condc
+     ((gt x y) fail)
+     ((gt x (cons 1 y))))))
+
+
+;; The genuine constraint solver for naturals would have determined
+;; that if NOT(x > y) then x > y+1 cannot succeed. The CLP system will
+;; return the finite failure. This is the fundamental difference
+;; between CLP and ordinary Prolog: Prolog is based on `generate and
+;; test', whereas CLP do `test and then generate'. They solve
+;; constraints using uninstantiated variables; they instantiate
+;; afterwards.
+
+;; Incidentally, your noto does not play well will committed choice
+;; like condu and conda, which is expected (one has to be very careful
+;; nesting of condu and conda). There is an easy way to make condu and
+;; conda sound (at least, reporting a run-time error when attempting
+;; to instantiate a non-local variable). The best way to solve this
+;; problems is with mode inference (as Mercury or Twelf do).
+
+;; Incidentally, the mini-Kanren is based on lazy lists (on streams).
+;; The monad of mini-Kanren is
+
+;;        data L a = Zero | One a | Cons a (() -> L a)
+
+;; which is the ordinary lazy list with the special case for
+;; one-element list.
 
