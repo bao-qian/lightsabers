@@ -23,31 +23,40 @@
        ))))
 
 
-;; Stream primitives
+
 (define-syntax lambdag@
   (syntax-rules ()
     ((_ (p ...) e ...) (lambda (p ...) e ...))))
+
 
 (define-syntax lambdaf@
   (syntax-rules ()
     ((_ () e ...) (lambda () e ...))))
 
+
 (define-syntax inc
   (syntax-rules () ((_ e) (lambdaf@ () e))))
+
 
 (define defunc
   (lambda (f)
     (if (procedure? f) (defunc (f)) f)))
 
+
+
+;;------------ stream primitives ------------
 (define snull 'snull)
+
 
 (define snull? 
   (lambda (s)
     (eq? s snull)))
 
+
 (define-syntax scons
   (syntax-rules ()
     ((_ a d) (cons a (lambda () d)))))
+
 
 (define scar
   (lambda (s)
@@ -55,25 +64,30 @@
      [(procedure? s) (scar (s))]
      [else (car s)])))
 
+
 (define scdr
   (lambda (s)
     (cond
      [(procedure? s) (scdr (s))]
      [else ((cdr s))])))
 
+
 (define-syntax sunit
   (syntax-rules ()
     ((_ a) (scons a snull))))
+
 
 (define slift
   (lambda (f)
     (lambda args
       (sunit (apply f args)))))
 
+
 (define-syntax make-stream
   (syntax-rules ()
     ((_) snull)
     ((_ e1 e2 ...) (scons e1 (make-stream e2 ...)))))
+
 
 (define taken
   (lambda (n s)
@@ -84,6 +98,7 @@
            [(snull? s) '()]
            [else (cons (scar s) (taken (and n (- n 1)) (scdr s)))])))))
 
+
 (define smerge
   (lambda (s1 s2)
     (cond
@@ -91,6 +106,7 @@
      [(procedure? s1)
       (lambda () (smerge s2 (s1)))]
      [else (scons (scar s1) (smerge s2 (scdr s1)))])))
+
 
 (define stream-merge
   (lambda (ss)
@@ -118,23 +134,33 @@
   (syntax-rules ()
     ((_ x) (cdr x))))
 
+
 (define-syntax lhs
   (syntax-rules ()
     ((_ x) (car x))))
+
 
 (define-syntax size-s
   (syntax-rules ()
     ((_ x) (length x))))
 
+
 (define-syntax var
   (syntax-rules ()
     ((_ x) (vector x))))
+
 
 (define-syntax var?
   (syntax-rules ()
     ((_ x) (vector? x))))
 
+
 (define empty-s '())
+
+(define ext-s
+  (lambda (x v s)
+    (cons `(,x . ,v) s)))
+
 
 (define walk
   (lambda (v s)
@@ -146,13 +172,11 @@
            (else v))))
       (else v))))
 
-(define ext-s
-  (lambda (x v s)
-    (cons `(,x . ,v) s)))
 
 (define unify
   (lambda (v w s env)
-    ((env-unify env) v w s env)))
+    ((Env-unify env) v w s env)))
+
 
 (define unify-good
   (lambda (v w s env)
@@ -173,13 +197,13 @@
 (define unify-evil
   (lambda (v w s env)
     (debug '(unify-evil unify) 
-           "v=~a, w=~a, cvars: ~a\n  subst:~a" v w (env-cvars env) s)
+           "v=~a, w=~a, cvars: ~a\n  subst:~a" v w (Env-cvars env) s)
     (let ((vv (walk v s))
           (ww (walk w s)))
       (cond
        ((eq? vv ww) s)
-       ((and (var? vv) (memq v (env-cvars env))) #f)
-       ((and (var? ww) (memq w (env-cvars env))) #f)
+       ((and (var? vv) (memq v (Env-cvars env))) #f)
+       ((and (var? ww) (memq w (Env-cvars env))) #f)
        ((var? vv) (ext-s vv ww s))
        ((var? ww) (ext-s ww vv s))
        ((and (pair? vv) (pair? ww))
@@ -191,30 +215,10 @@
 
 (define switch-unify
   (lambda (env)
-    (if (eq? (env-unify env) unify-good)
+    (if (eq? (Env-unify env) unify-good)
         (change-unify env unify-evil)
         (change-unify env unify-good))))
 
-(define unify-pred
-  (lambda (v pred s env)
-    (let ((v (walk v s)))
-      (if (var? v)
-          (cond 
-           [(eq? pred number?) (ext-s v (random 9999999999) s)]
-           [(eq? pred string?) (ext-s v "random string..." s)]
-           [(eq? pred symbol?) (ext-s v 'randomstring... s)]
-           )
-          (cond
-           [(pred v) s]
-           [else #f])))))
-
-(define predo
-  (lambda (q pred)
-    (lambdag@ (s env)
-      (let ((s1 (unify-pred q pred s env)))
-        (cond
-         [(not s1) snull]
-         [else (sunit s1)])))))
 
 (define unify-check
   (lambda (u v s)
@@ -237,6 +241,7 @@
       ((occurs-check x v s) #f)
       (else (ext-s x v s)))))
 
+
 (define occurs-check
   (lambda (x v s)
     (let ((v (walk v s)))
@@ -247,6 +252,7 @@
            (occurs-check x (car v) s)
            (occurs-check x (cdr v) s)))
         (else #f)))))
+
 
 (define walk*
   (lambda (w s)
@@ -259,6 +265,7 @@
            (walk* (cdr v) s)))
         (else v)))))
 
+
 (define reify-s
   (lambda (v s)
     (debug 'reify-s "v: ~a\ns:~a" v s)
@@ -270,10 +277,12 @@
                      (reify-s (car v) s)))
         (else s)))))
 
+
 (define reify-name
   (lambda (n)
     (string->symbol
       (string-append "_" "." (number->string n)))))
+
 
 (define reify
   (lambda (v s)
@@ -281,74 +290,94 @@
       (walk* v (reify-s v empty-s)))))
 
 
-(define pkg
-  (lambda (s c)
-    (list s c)))
-(define pkg-subst car)                  ; current substitution
-(define pkg-constraints cadr)
+
+
+
+;-------------------------------------------------------------
+;                     data structures
+;-------------------------------------------------------------
+
+(struct Pkg (subst constraints) #:transparent)
+
+
+;; constraints save the current environment vars
+(struct Constraint (goal vars text) #:transparent)
+
+
+;; environment
+(struct Env (unify constraints vars cvars) #:transparent)
+
+(define Env-constraint-goals
+  (lambda (p)
+    (map Constraint-goal (Env-constraint p))))
+
+
 (define ext-pkg-constraints
   (lambda (p cs ctexts env)
     (let ([newc (map (lambda (g t) 
-                       (make-constraint g (env-vars env) t))
+                       (Constraint g (Env-vars env) t))
                      cs ctexts)])
-      (pkg (pkg-subst p) (append newc (pkg-constraints p))))))
-
-;; constraints save the current environment vars
-(define make-constraint
-  (lambda (g vars text)
-    (list g vars text)))
-(define constraint-goal car)            ; constraint goal
-(define constraint-vars cadr)            ; variables which the constraint care about
-(define constraint-text caddr)
-
-;; environment
-(define make-env
-  (lambda (unify constraints vars cvars)
-    (list unify constraints vars cvars)))
-(define empty-env (list unify-good '() '() '()))
-(define env-unify car)                 ; which unification to use (env)
-(define env-constraints cadr)          ; current constraints (env)
-(define env-vars caddr)                ; variables at this point (env)
-(define env-cvars cadddr)              ; checked variables at this point (env)
-(define env-constraint-goals
-  (lambda (p)
-    (map constraint-goal (env-constraint p))))
+      (Pkg (Pkg-subst p) (append newc (Pkg-constraints p))))))
 
 
 
+;; convenience functions
 (define change-unify
   (lambda (p u)
-    (make-env u (env-constraints p) (env-vars p) (env-cvars p))))
+    (match p
+      [(Env _ constraints vars cvars)
+       (Env u constraints vars cvars)])))
+
 
 (define change-constraints
   (lambda (p c)
-    (make-env (env-unify p) c (env-vars p) (env-cvars p))))
+    (match p
+      [(Env unify _ vars cvars)
+       (Env unify c vars cvars)])))
+
 
 (define change-vars
   (lambda (p v)
-    (make-env (env-unify p) (env-constraints p) v (env-cvars p))))
+    (match p
+      [(Env unify constraints _ cvars)
+       (Env unify constraints v cvars)])))
+
 
 (define change-cvars
   (lambda (p cv)
-    (env (env-unify p) (env-constraints p) (env-vars p) cv)))
+    (match p
+      [(Env unify constraints vars _)
+       (Env unify constraints vars cv)])))
+
 
 (define ext-constraint
   (lambda (env new-cg)
-    (let ([newc (map (lambda (g) (make-constraint g (env-vars env) 'a))
+    (let ([newc (map (lambda (g) (Constraint g (Env-vars env) 'a))
                      new-cg)])
       (change-constraints env newc))))
 
+
 (define ext-vars
   (lambda (env new-vars)
-    (change-vars env (append new-vars (env-vars env)))))
+    (change-vars env (append new-vars (Env-vars env)))))
+
 
 (define ext-cvars
   (lambda (env new-cvars)
-    (change-cvars env (append new-cvars (env-cvars env)))))
+    (change-cvars env (append new-cvars (Env-cvars env)))))
 
 
 
-;;; miniKanren
+
+
+
+;-------------------------------------------------------------
+;                       miniKanren
+;-------------------------------------------------------------
+
+(define succeed (lambda (s env) (sunit s)))
+(define fail (lambda (s env) snull))
+
 
 (define bind
   (lambda (s f env)
@@ -357,16 +386,18 @@
      [else
       (stream-merge (smap (lambda (s) (f s env)) s))])))
 
+
 (define bind*
   (lambda (s goals env)
     (cond
      [(null? goals)
       (stream-merge
        (smap (lambda (s) 
-               (bind-constraints (sunit s) (pkg-constraints s) env))
+               (bind-constraints (sunit s) (Pkg-constraints s) env))
              s))]
      [(snull? s) snull]
      [else (bind* (bind s (car goals) env) (cdr goals) env)])))
+
 
 (define bind*
   (lambda (s goals env)
@@ -375,6 +406,7 @@
      [(snull? s) snull]
      [else (bind* (bind s (car goals) env) (cdr goals) env)])))
 
+
 (define bind-constraints
   (lambda (s cs env)
     (cond
@@ -382,44 +414,48 @@
      [(snull? s) snull]
      [else 
       (debug 'bind-constraints
-             "checking constraint: ~a" (constraint-text (car cs)))
+             "checking constraint: ~a" (Constraint-text (car cs)))
       (bind-constraints
             (bind s
-                  (constraint-goal (car cs))
-                  (make-env (env-unify env)
+                  (Constraint-goal (car cs))
+                  (Env (Env-unify env)
                             '()                     ; no constraints
-                            (env-vars env)
-                            (constraint-vars (car cs)))) 
+                            (Env-vars env)
+                            (Constraint-vars (car cs)))) 
             (cdr cs)
             env)])))
 
-(define ==
-  (lambda (u v)
-    (lambdag@ (s env)
-      (let ((s1 ((env-unify env) u v (pkg-subst s) env)))
-        (cond
-         [(not s1) snull]
-         [else (sunit (pkg s1 (pkg-constraints s)))])))))
 
 (define ==
   (lambda (u v)
     (lambdag@ (s env)
-      (let ((s1 ((env-unify env) u v (pkg-subst s) env)))
+      (let ((s1 ((Env-unify env) u v (Pkg-subst s) env)))
+        (cond
+         [(not s1) snull]
+         [else (sunit (Pkg s1 (Pkg-constraints s)))])))))
+
+
+(define ==
+  (lambda (u v)
+    (lambdag@ (s env)
+      (let ((s1 ((Env-unify env) u v (Pkg-subst s) env)))
         (cond
          [(not s1) snull]
          [else
-          (let ([cc (bind-constraints (sunit (pkg s1 '()))
-                                      (pkg-constraints s) env)])
+          (let ([cc (bind-constraints (sunit (Pkg s1 '()))
+                                      (Pkg-constraints s) env)])
             (if (snull? cc)
                 snull
-                (sunit (pkg s1 (filter (lambda (c) 
-                                         (not (tautology? c (pkg-subst s))))
-                                       (pkg-constraints s))))))])))))
+                (sunit (Pkg s1 (filter (lambda (c) 
+                                         (not (tautology? c (Pkg-subst s))))
+                                       (Pkg-constraints s))))))])))))
+
 
 (define ando
   (lambda goals
     (lambdag@ (s env)
       (bind* (sunit s) goals env))))
+
 
 (define org2
   (lambda (goals)
@@ -430,6 +466,7 @@
         (scons (bind (sunit s) (car goals) env)
                ((org2 (cdr goals)) s env))]))))
 
+
 (define oro
   (lambda goals
     (lambdag@ (s env)
@@ -438,25 +475,10 @@
 (define noto
   (lambda (g)
     (lambdag@ (s env)
-      (inc
-        (let ([ans (g s (switch-unify env))])
-          (letrec ((negate (lambda (s)
-                             (cond
-                              [(procedure? s) (lambda () (negate (s)))]
-                              [(snull? ans) (succeed s env)]
-                              [else (fail s env)]))))
-                  (negate ans)))))))
-
-(define noto
-  (lambda (g)
-    (lambdag@ (s env)
       (let ([ans (defunc (g s (switch-unify env)))])
-        ((if (snull? ans)
-             ;;             (begin (printf "###fail###\n") succeed)
-             ;;             (begin (printf "###succeed###\n") fail)
-             succeed
-             fail
-             ) s env)))))
+        (if (snull? ans)
+            (succeed s env)
+            (fail s env))))))
 
 
 (define-syntax exist
@@ -467,6 +489,7 @@
          (let ((x (var 'x)) ...)
            ((ando g0 g ...) s (ext-vars env (list x ...)))))))))
 
+
 (define-syntax forall
   (syntax-rules ()
     ((_ (x ...) g0 g ...)
@@ -474,11 +497,12 @@
        (inc
          (let ((x (var 'x)) ...)
            ((ando g0 g ...)
-            (let loop ([ss (pkg-subst s)] [vars (list x ...)])
+            (let loop ([ss (Pkg-subst s)] [vars (list x ...)])
              (cond
               [(null? vars) ss]
               [else (loop (ext-s (car vars) (gensym) ss) (cdr vars))]))
             (ext-vars env (list x ...)))))))))
+
 
 (define-syntax conde
   (syntax-rules ()
@@ -487,6 +511,7 @@
        (inc
          ((oro (ando g0 g ...)
                (ando g1 g^ ...) ...) s env))))))
+
 
 (define-syntax condc
   (syntax-rules ()
@@ -498,35 +523,37 @@
                (assert ((noto g0))
                        (condc g^ ...))) s env))))))
 
+
 (define reify-constraint
   (lambda (s)
     (lambda (c)
-      (let ((ct (constraint-text c)))
+      (let ((ct (Constraint-text c)))
         (cond
          [(pair? ct)
           (cons (car ct) 
-                (map (lambda (v) (walk* v (pkg-subst s))) (cdr ct)))]
+                (map (lambda (v) (walk* v (Pkg-subst s))) (cdr ct)))]
          [else ct])))))
+
 
 (define format-constraints
   (lambda (s)
     (debug 'format-constraints "subst: ~a\nconstraints: ~a\n" 
-           (pkg-subst s)
-           (pkg-constraints s))
+           (Pkg-subst s)
+           (Pkg-constraints s))
     (map (reify-constraint s)
          (filter (lambda (c) 
-                   (not (tautology? c (pkg-subst s))))
-                 (pkg-constraints s)))))
+                   (not (tautology? c (Pkg-subst s))))
+                 (Pkg-constraints s)))))
 
 
 (define-syntax run
   (syntax-rules ()
     ((_ n (x) g0 g ...)
      (let ((x (var 'x)))
-       (let ([ss ((ando g0 g ...) (pkg empty-s '())
-                   (make-env unify-good '() (list x) '()))])
+       (let ([ss ((ando g0 g ...) (Pkg empty-s '())
+                   (Env unify-good '() (list x) '()))])
          (taken n (smap (lambda (s)
-                         (let* ((x (walk* x (pkg-subst s)))
+                         (let* ((x (walk* x (Pkg-subst s)))
                                 (rs (reify-s x empty-s)))
                            (list
                             (walk* x rs)
@@ -536,22 +563,24 @@
                                   (list 'constraints: ctext))))))
                        ss)))))))
 
+
 (define tautology?
   (lambda (c s)
     (debug 'tautology?
            "constraint: ~a\nvars: ~a\nsubst:~a\n"
-           (constraint-text c)
-           (constraint-vars c)
+           (Constraint-text c)
+           (Constraint-vars c)
            s)
     (not (snull?
-          (defunc ((constraint-goal c)
-                   (pkg s '())
-                   (make-env unify-evil '() '() (constraint-vars c))))))))
+          (defunc ((Constraint-goal c)
+                   (Pkg s '())
+                   (Env unify-evil '() '() (Constraint-vars c))))))))
 
 
 (define-syntax run*
   (syntax-rules ()
     ((_ (x) g ...) (run #f (x) g ...))))
+
 
 (define-syntax make-text
   (syntax-rules (quote quasiquote)
@@ -559,6 +588,7 @@
     ((_ (quasiquote a)) (quasiquote a))
     ((_ (g a0 ...)) (list 'g (make-text a0) ...))
     ((_ a) a)))
+
 
 (define-syntax make-text*
   (syntax-rules (quote quasiquote)
@@ -582,6 +612,7 @@
 ;; (define q 10)
 ; (make-text* (noto (== q 3)))
 
+
 (define-syntax assert
   (syntax-rules ()
     ((_ (c0 c ...) g ...)
@@ -591,6 +622,7 @@
          (ext-pkg-constraints s (list c0 c ...) (make-text* c0 c ...) env)
          (ext-constraint env (list c0 c ...))))))))
 
+
 (define-syntax conda
   (syntax-rules ()
     ((_ (g0 g ...) (g1 g^ ...) ...)
@@ -598,6 +630,7 @@
        (inc
          (ifa ((g0 s) g ...)
               ((g1 s) g^ ...) ...))))))
+
 
 (define-syntax ifa
   (syntax-rules ()
@@ -607,6 +640,7 @@
       [(snull? (defunc e)) (ifa b ...)]
       [else (bind* e (list g ...))]))))
 
+
 (define-syntax condu
   (syntax-rules ()
     ((_ (g0 g ...) (g1 g^ ...) ...)
@@ -614,6 +648,7 @@
        (inc
          (ifu ((g0 s) g ...)
               ((g1 s) g^ ...) ...))))))
+
  
 (define-syntax ifu
   (syntax-rules ()
@@ -623,6 +658,7 @@
       [(snull? (defunc e)) (ifa b ...)]
       [else (bind* (sunit (scar e)) (list g ...))]))))
 
+
 (define-syntax project
   (syntax-rules ()
     ((_ (x ...) g g* ...)
@@ -630,8 +666,7 @@
        (let ((x (walk* x s)) ...)
          ((exist () g g* ...) s env))))))
 
-(define succeed (lambda (s env) (sunit s)))
-(define fail (lambda (s env) snull))
+
 
 (define prints
   (lambda (s env)
@@ -639,11 +674,13 @@
       (printf "#[prints]:: ~s\n" s)
       (succeed s env))))
 
+
 (define print-env
   (lambdag@ (s env)
     (begin 
       (printf "env: ~s\n" env)
       (succeed s env))))
+
 
 (define print-var
   (lambda (name v)
@@ -652,11 +689,12 @@
         (printf "#[print-var] ~a = ~s\n" name (walk v s))
         (succeed s env)))))
 
+
 (define-syntax print-var
   (syntax-rules ()
     ((_ v) (lambda (s env)
              (begin 
-               (printf "#[print-var] ~a = ~s\n" 'v (walk* v (pkg-subst s)))
+               (printf "#[print-var] ~a = ~s\n" 'v (walk* v (Pkg-subst s)))
                (succeed s env))))))
 
 
@@ -664,7 +702,7 @@
   (lambda (s env)
     (printf "#[constraints] \n~a\n" 
             (map (lambda (s) (format "~a\n" s))
-                 (map (reify-constraint s) (pkg-constraints s))))
+                 (map (reify-constraint s) (Pkg-constraints s))))
     (succeed s env)))
 
 
@@ -672,7 +710,7 @@
 
 
 ;-------------------------------------------------------------
-;         basic definitions from The Reasoned Schemer
+;                basic definitions (from TRS)
 ;-------------------------------------------------------------
 
 (define caro
@@ -686,23 +724,28 @@
     (exist (a)
       (== (cons a d) p))))
 
+
 (define conso
   (lambda (a d p)
     (== (cons a d) p)))
+
 
 (define nullo
   (lambda (x)
     (== '() x)))
 
+
 (define eqo
   (lambda (x y)
     (== x y)))
+
 
 (define pairo
   (lambda (p)
     (exist (a d)
       (conso a d p))))
 
+
 (define nullo
   (lambda (x)
     (== '() x)))
@@ -711,11 +754,11 @@
 
 
 ;-------------------------------------------------------------
-;         rembero (The Reasoned Schemer frame 30)
+;                  rembero (TRS frame 30)
 ;-------------------------------------------------------------
 
 ;; using conde operator
-(define rembero
+(define rembero1
   (lambda (x l out)
     (conde
       ((nullo l) (== '() out))
@@ -723,15 +766,16 @@
       ((exist (res)
          (exist (d)
            (cdro l d)
-           (rembero x d res))
+           (rembero1 x d res))
          (exist (a)
            (caro l a)
            (conso a res out)))))))
 
 
+;; example
 (run* (out)
  (exist (y)
-   (rembero y `(a b ,y d peas e) out)))
+   (rembero1 y `(a b ,y d peas e) out)))
 
 
 ;; We got 7 answers, 4 of which shouldn't happen, because
@@ -764,7 +808,7 @@
            (conso a res out)))))))
 
 
-
+;; example
 (run* (out)
  (exist (y)
    (rembero y `(a b ,y d peas e) out)))
@@ -804,7 +848,8 @@
 ;;   ((_.0 (_.1 _.0 . _.2) (_.1 . _.2))
 ;;    (constraints: ((noto (caro (_.1 _.0 . _.2) _.0)))))
 ;;   ((_.0 (_.1 _.2) (_.1 _.2))
-;;    (constraints: ((noto (caro (_.2) _.0)) (noto (caro (_.1 _.2) _.0))))))
+;;    (constraints: ((noto (caro (_.2) _.0))
+;;                   (noto (caro (_.1 _.2) _.0))))))
 
 
 ;; Here, the constraints are really part of the answer: the answer
@@ -831,9 +876,9 @@
       ((caro (list x) y))
       ((caro (list y) x))
       ((caro (list y) 1))
-      ((caro (list x) 1))
-      )))
+      ((caro (list x) 1)))))
 
+;; =>
 ;; '(((_.0 _.0) ())
 ;;   ((_.0 1)
 ;;    (constraints: 
@@ -873,23 +918,23 @@
 (run* (out) (gt '(1 1 1 1) out))
 
 
-(run 1 (out)
- (exist (x y)
-  (condc
-    ((gt x y) fail)
-    ((gt x (cons 1 y))
-     (num x) (num y) (== out 'really?)))))
+;; (run 1 (out)
+;;  (exist (x y)
+;;   (condc
+;;     ((gt x y) fail)
+;;     ((gt x (cons 1 y))
+;;      (num x) (num y) (== out 'really?)))))
 
 ;; => diverges
 
 ;; rewritten this way
-(run 1 (out)
- (exist (x y)
-   (== out (list x y))
-   (num x) (num y)
-   (condc
-     ((gt x y) fail)
-     ((gt x (cons 1 y))))))
+;; (run 1 (out)
+;;  (exist (x y)
+;;    (== out (list x y))
+;;    (num x) (num y)
+;;    (condc
+;;      ((gt x y) fail)
+;;      ((gt x (cons 1 y))))))
 
 
 ;; The genuine constraint solver for naturals would have determined
@@ -914,4 +959,7 @@
 
 ;; which is the ordinary lazy list with the special case for
 ;; one-element list.
+
+       ;; Cheers,
+       ;; Oleg
 
