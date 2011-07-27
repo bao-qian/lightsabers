@@ -1,4 +1,4 @@
-* CPSer.ss - a simple CPS transformer.
+* cps.ss - a simple CPS transformer.
 
 * meta-interp.ss - a meta-circular interpreter (reflection tower).
 
@@ -10,3 +10,4 @@
 
 * interp-call-by-need.ss - a lazy interpreter
 
+* encoding.scm - encodings of various things in the lambda calculus
