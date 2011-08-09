@@ -34,20 +34,17 @@
 (define combine
   (lambda (exp)
     (define combine1
-      (lambda (exp ct)
-        (match exp
-          [`((and ,x* ...))
-           (let ([vx* (map (lambda (x) (combine1 (list x) 'and)) x*)])
-             (cond
-              [(eq? 'and ct) (apply append vx*)]
-              [else `((and ,@(apply append vx*)))]))]
-          [`((or ,x* ...))
-           (let ([vx* (map (lambda (x) (combine1 (list x) 'or)) x*)])
-             (cond
-              [(eq? 'or ct) (apply append vx*)]
-              [else `((or ,@(apply append vx*)))]))]
-          [other other])))
-    (car (combine1 (list exp) 'id))))
+      (lambda (ct)
+        (lambda (exp)
+          (match exp
+            [`(and ,x* ...)
+             (let ([y* (apply append (map (combine1 'and) x*))])
+               (if (eq? 'and ct) y* `((and ,@y*))))]
+            [`(or ,x* ...)
+             (let ([y* (apply append (map (combine1 'or) x*))])
+               (if (eq? 'or ct) y* `((or ,@y*))))]
+            [other (list other)]))))
+    (car ((combine1 'id) exp))))
 
 
 ;; Examples for combine:
@@ -79,4 +76,3 @@
 ;;      (and (not b) (not c) d)
 ;;      (and (not a) e)
 ;;      (and (not b) (not c) e))
-
