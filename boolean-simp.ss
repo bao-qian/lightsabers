@@ -2,6 +2,7 @@
 ;; author: Yin Wang (yinwang0@gmail.com)
 
 
+;---------------------------------------------
 ;; (1) Push 'and' into 'or'
 ;; (2) Push 'not' into 'and' or 'or'
 ;; Do (1) and (2) recursively until no more simplification can be made
@@ -29,8 +30,11 @@
 
 
 
+;---------------------------------------------
 ;; Combine nested expressions with same operator, for example
 ;; (and (and a b) c) ==> (and a b c)
+;; (or a (or b c)) ==> (or a b c)
+;; (not (not a)) ==> a
 (define combine
   (lambda (exp)
     (define combine1
@@ -43,6 +47,8 @@
             [`(or ,x* ...)
              (let ([y* (apply append (map (combine1 'or) x*))])
                (if (eq? 'or ct) y* `((or ,@y*))))]
+            [`(not (not ,a))
+             ((combine1 ct) a)]
             [other (list other)]))))
     (car ((combine1 'id) exp))))
 
@@ -52,14 +58,15 @@
 ;; (combine '(and (and (and (and a b) c) d) e))
 ;; (combine '(and (and a (and b c)) (and d e)))
 ;; (combine '(or (and a (and b c) d)))
+;; (combine '(not (not a)))
+;; (combine '(not (not (not (not a)))))
 
 
-
-;; simpl then combine
+;---------------------------------------------
+;; main function (simpl then combine)
 (define simplify
   (lambda (exp)
     (combine (simpl exp))))
-
 
 
 
@@ -69,6 +76,8 @@
 ;; ==>
 ;; '(or (and football baby) (and basketball baby))
 
+
+;---------------------------------------------
 (simplify '(and (not (and a (or b c))) (or d e)))
 
 ;; ==>
@@ -76,3 +85,9 @@
 ;;      (and (not b) (not c) d)
 ;;      (and (not a) e)
 ;;      (and (not b) (not c) e))
+
+
+;---------------------------------------------
+(simplify '(not (and (not a) (not (and b c)))))
+
+;; ==> '(or a (and b c))
