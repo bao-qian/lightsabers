@@ -34,32 +34,27 @@
 (define combine
   (lambda (exp)
     (define combine1
-      (lambda (exp ct C)
+      (lambda (exp ct)
         (match exp
           [`((and ,x* ...))
-           (combine1 x* 'and
-             (lambda (v*)
-               (cond
-                 [(eq? 'and ct) (C v*)]
-                 [else (C `((and ,@v*)))])))]
+           (let ([vx* (map (lambda (x) (combine1 (list x) 'and)) x*)])
+             (cond
+              [(eq? 'and ct) (apply append vx*)]
+              [else `((and ,@(apply append vx*)))]))]
           [`((or ,x* ...))
-           (combine1 x* 'or
-             (lambda (v*)
-               (cond
-                 [(eq? 'or ct) (C v*)]
-                 [else (C `((or ,@v*)))])))]
-          [`(,a ,b ,c* ...)
-           (combine1 (list a) ct
-             (lambda (vx)
-               (C `(,@vx ,@(combine1 `(,b ,@c*) ct (lambda (x) x))))))]
-          [other (C other)])))
-    (car (combine1 (list exp) 'id (lambda (x) x)))))
+           (let ([vx* (map (lambda (x) (combine1 (list x) 'or)) x*)])
+             (cond
+              [(eq? 'or ct) (apply append vx*)]
+              [else `((or ,@(apply append vx*)))]))]
+          [other other])))
+    (car (combine1 (list exp) 'id))))
 
 
+;; Examples for combine:
 ;; (combine '(and (and a (and b (and c (and d e))))))
 ;; (combine '(and (and (and (and a b) c) d) e))
 ;; (combine '(and (and a (and b c)) (and d e)))
-;; (combine '(or (and a b) c))
+;; (combine '(or (and a (and b c) d)))
 
 
 
