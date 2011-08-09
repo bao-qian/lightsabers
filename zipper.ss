@@ -20,8 +20,8 @@
     (cond
      [(null? ls) ls]
      [else
-      (let* ([h1 (f (car ls))]
-             [t1 (map* f (cdr ls))])
+      (let ([h1 (f (car ls))]
+            [t1 (map* f (cdr ls))])
         (cond
          [(and (eq? h1 (car ls)) (eq? t1 (cdr ls))) ls]
          [else (cons h1 t1)]))])))
@@ -34,7 +34,7 @@
      [(handle tree) => (lambda (x) x)]
      [(not (pair? tree)) tree]
      [else
-      (let ((r (map* (lambda (x) (depth-first handle x)) (cdr tree))))
+      (let ([r (map* (lambda (x) (depth-first handle x)) (cdr tree))])
         (cond
          [(eq? r (cdr tree)) tree]
          [else
@@ -118,13 +118,13 @@
 
 (define locate-nth-node
   (lambda (n tree)
-    (let loop ([i 0] (cursor (zip-tree tree)))
+    (let loop ([n n] (cursor (zip-tree tree)))
       (cond
        [(not (zipper? cursor))
         (error "too few nodes")]
-       [(= i n) cursor]
+       [(zero? n) cursor]
        [else
-        (loop (add1 i) ((zipper-k cursor) #f))]))))
+        (loop (sub1 n) ((zipper-k cursor) #f))]))))
 
 
 
@@ -199,4 +199,8 @@ tree2*
 ;; shared node: 12
 ;; t1 node: y
 ;; t2 node: newy
+
+
+
+(cons 'a (reset (cons 'b (shift f (cons 1 (f (f (cons 'c '()))))))))
 
