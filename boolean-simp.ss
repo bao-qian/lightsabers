@@ -4,7 +4,7 @@
 
 ;---------------------------------------------
 ;; (1) Push 'and' into 'or'
-;; (2) Push 'not' into 'and' or 'or'
+;; (2) Push 'not' into 'and' and 'or'
 ;; Do (1) and (2) recursively until no more simplification can be made
 (define simpl
   (lambda (exp)
@@ -41,6 +41,10 @@
       (lambda (ct)
         (lambda (exp)
           (match exp
+            [`(and ,a ,a)
+             (list a)]
+            [`(or ,a ,a)
+             (list a)]
             [`(and ,x* ...)
              (let ([y* (apply append (map (combine1 'and) x*))])
                (if (eq? 'and ct) y* `((and ,@y*))))]
@@ -91,3 +95,10 @@
 (simplify '(not (and (not a) (not (and b c)))))
 
 ;; ==> '(or a (and b c))
+
+
+;---------------------------------------------
+(simplify '(and (or a b) (or a c)))
+
+;; ==> '(or (and a c) (and a d) (and b c) (and b d))
+
