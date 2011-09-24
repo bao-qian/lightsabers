@@ -84,13 +84,7 @@ eqVal (k, u1, u2) =
 
 
 
-------------------  type-checking and type inference  ---------------------
-
--- top level: check that expression e has the type VType
-checkType :: (Int, Env, Env) -> Exp -> Bool
-checkType (k, rho, gamma) e = checkExp (k, rho, gamma) e VType
-
-
+---------------  type-checking and type inference  --------------
 
 -- check an expression (e) against a type (v)
 checkExp :: (Int, Env, Env) -> Exp -> Val -> Bool
@@ -100,14 +94,14 @@ checkExp (k, rho, gamma) e v =
         let v = VGen k
         in checkExp (k+1, update rho x v, update gamma x w) e1 (fapp f v)
    (Pi x a b, VType) ->
-        checkType (k, rho, gamma) a &&
-        checkType (k+1, update rho x (VGen k), update gamma x (eval rho a)) b
+        checkExp (k, rho, gamma) a VType &&
+        checkExp (k+1, update rho x (VGen k), update gamma x (eval rho a)) b VType
    _ -> eqVal (k, inferExp (k, rho, gamma) e, v)
 
 
 
 -- synthesize (infer) a type from expression
-inferExp :: (Int,Env,Env) -> Exp -> Val
+inferExp :: (Int, Env, Env) -> Exp -> Val
 inferExp (k, rho, gamma) e =
  case e of
    Var id -> lookUp id gamma
@@ -116,8 +110,8 @@ inferExp (k, rho, gamma) e =
         VPi w f ->
           if checkExp (k, rho, gamma) e2 w
                then fapp f (eval rho e2)
-          else error "application error"
-        _ -> error "application, expected Pi"
+          else error "wrong argument type"
+        _ -> error "trying to apply non-function"
    Type -> VType
    _ -> error "cannot infer type"
 
