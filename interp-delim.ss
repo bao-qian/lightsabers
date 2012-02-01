@@ -1,4 +1,29 @@
-(load "pmatch.scm")
+(define-syntax pmatch
+  (syntax-rules (else guard)
+    ((_ (rator rand ...) cs ...)
+     (let ((v (rator rand ...)))
+       (pmatch v cs ...)))
+    ((_ v) (error 'pmatch "failed: ~s" v))
+    ((_ v (else e0 e ...)) (begin e0 e ...))
+    ((_ v (pat (guard g ...) e0 e ...) cs ...)
+     (let ((fk (lambda () (pmatch v cs ...))))
+       (ppat v pat (if (and g ...) (begin e0 e ...) (fk)) (fk))))
+    ((_ v (pat e0 e ...) cs ...)
+     (let ((fk (lambda () (pmatch v cs ...))))
+       (ppat v pat (begin e0 e ...) (fk))))))
+
+(define-syntax ppat
+  (syntax-rules (_ quote unquote)
+    ((_ v _ kt kf) kt)
+    ((_ v () kt kf) (if (null? v) kt kf))
+    ((_ v (quote lit) kt kf) (if (equal? v (quote lit)) kt kf))
+    ((_ v (unquote var) kt kf) (let ((var v)) kt))
+    ((_ v (x . y) kt kf)
+     (if (pair? v)
+       (let ((vx (car v)) (vy (cdr v)))
+	 (ppat vx x (ppat vy y kt kf) kf))
+       kf))
+    ((_ v lit kt kf) (if (equal? v (quote lit)) kt kf))))
 
 (define *debug* #t)
 (define-syntax peek
@@ -71,15 +96,27 @@
     (interp1 exp '() (lambda (x) x) '())))
 
 
+
+;; Danvy-filinski test
+(interp '(+ 10 (reset (+ 2 (shift0 (k) (+ 100 (k (k 3))))))))
+; => 117 (pass)
+
+;; Danvy-filinski paper
+(interp '(+ 5 (reset (+ 3 (shift0 (c) (+ (c 0) (c 1)))))))
+; => 12 (pass)
+
 (interp '(+ 1 (+ 2 (+ 4 8))))
+; => 15 (pass)
 
 (interp '(+ 1 (reset (+ 2 (+ (shift0 (k) 4) 8)))))
-
-(interp '(+ 10 (reset (+ 2 (shift0 (k) (+ 100 (k (k 3))))))))
+; => 5 (pass)
 
 (interp '(reset (+ 1 (reset (+ 2 (reset (+ 4 (shift0 (k1) (shift0 (k2) 8)))))))))
+; => 9 (pass)
 
-(interp '(reset (+ 1 (reset (+ 2 ((shift0 (k1) (k1 (lambda (x) x))) (shift0 (k2) 4)))))))
+(interp '(reset (+ 1 (reset (+ 2 ((shift0 (k1) (k1 (lambda (x) x)))
+                                  (shift0 (k2) 4)))))))
+; => 6 (fail, should be 5)
 
 (interp '(+ 1 (reset (+ 2 3))))
-
+; => 5 (fail, should be 6)

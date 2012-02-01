@@ -56,6 +56,7 @@
 ;; var
 (cps 'x)
 (cps '(lambda (x) x))
+(cps '(lambda (x) (x 1)))
 
 
 ; no lambda (will generate identity functions to return to the toplevel)
