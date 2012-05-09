@@ -1,3 +1,5 @@
+Some beautiful code. They are extremely short, and extremely powerful.
+
 * cps.ss - a simple CPS transformer.
 
 * meta-interp.ss - a meta-circular interpreter (reflection tower).
@@ -9,5 +11,7 @@
   operator.
 
 * interp-call-by-need.ss - a lazy interpreter
+
+* interp-delim.ss - a simple interpreter with delimited continuation operators (shift/reset/shift0/reset0)
 
 * encoding.scm - encodings of various things in the lambda calculus
