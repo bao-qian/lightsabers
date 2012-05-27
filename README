@@ -1,17 +1,22 @@
-Some beautiful code. They are extremely short, yet extremely powerful.
+Some very interesting code. They are extremely short, yet extremely powerful.
 
-* cps.ss - a simple CPS transformer.
+* cps.ss - a CPS transformer
 
-* meta-interp.ss - a meta-circular interpreter (reflection tower).
+* meta-interp.ss - a meta-circular interpreter (reflection tower)
 
 * infer.ss - a type inferencer for the lambda calculus. It can infer
-  infinite types (such as delta, omega, and the Y-combinator).
+  infinite types (such as delta, omega, and the Y-combinator)
 
 * mk-c.ss - a modified miniKanren implementation with a negation
-  operator.
+  operator
 
 * interp-call-by-need.ss - a lazy interpreter
 
-* interp-delim.ss - a simple interpreter with delimited continuation operators (shift/reset/shift0/reset0)
+* lazy-ski.ss - a compiler from lambda calculus to "lazy combinators"
+
+* interp-delim.ss - a simple interpreter with delimited continuation
+  operators (shift/reset/shift0/reset0)
 
 * encoding.scm - encodings of various things in the lambda calculus
+
+* pmatch.scm - supporting macro for pattern matching
