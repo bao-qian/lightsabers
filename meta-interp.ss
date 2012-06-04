@@ -13,6 +13,7 @@
      ((lambda (u) (u u))
       (lambda (x) (f (lambda (t) ((x x) t)))))))
 
+
 (define interp-text
   `(,Y
     (lambda (interp)
@@ -25,97 +26,84 @@
              [(string? exp) (k exp)]
              [(symbol? exp) (k (env exp))]
              [(eq? 'cond (car exp))
-              ((((,Y (lambda (eval-cond)
+              ((((,Y (lambda (loop)
                        (lambda (cls)
                          (lambda (env)
                            (lambda (k)
-                             (((interp (caar cls)) env)
+                             (((interp (car (car cls))) env)
                               (lambda (t)
                                 (if t
-                                    (((interp (cadar cls)) env) k)
-                                    (((eval-cond (cdr cls)) env) k)))))))))
+                                    (((interp (car (cdr (car cls)))) env) k)
+                                    (((loop (cdr cls)) env) k)))))))))
                  (cdr exp)) env) k)]
              [(eq? 'eq? (car exp))
-              (((interp (cadr exp)) env)
-               (lambda (v1) 
-                 (((interp (caddr exp)) env)
+              (((interp (car (cdr exp))) env)
+               (lambda (v1)
+                 (((interp (car (cdr (cdr exp)))) env)
                   (lambda (v2) (k (eq? v1 v2))))))]
              [(eq? '= (car exp))
-              (((interp (cadr exp)) env)
-               (lambda (v1) 
-                 (((interp (caddr exp)) env)
+              (((interp (car (cdr exp))) env)
+               (lambda (v1)
+                 (((interp (car (cdr (cdr exp)))) env)
                   (lambda (v2) (k (= v1 v2))))))]
              [(eq? '* (car exp))
-              (((interp (cadr exp)) env)
+              (((interp (car (cdr exp))) env)
                (lambda (v1)
-                 (((interp (caddr exp)) env)
+                 (((interp (car (cdr (cdr exp)))) env)
                   (lambda (v2) (k (* v1 v2))))))]
-             [(eq? 'cons (car exp)) 
-              (((interp (cadr exp)) env)
+             [(eq? 'cons (car exp))
+              (((interp (car (cdr exp))) env)
                (lambda (v1)
-                 (((interp (caddr exp)) env)
+                 (((interp (car (cdr (cdr exp)))) env)
                   (lambda (v2) (k (cons v1 v2))))))]
-             [(eq? 'quote (car exp)) (k (cadr exp))]
-             [(eq? 'sub1 (car exp)) 
-              (((interp (cadr exp)) env) (lambda (v) (k (sub1 v))))]
-             [(eq? 'number? (car exp)) 
-              (((interp (cadr exp)) env) (lambda (v) (k (number? v))))]
-             [(eq? 'boolean? (car exp)) 
-              (((interp (cadr exp)) env) (lambda (v) (k (boolean? v))))]
+             [(eq? 'quote (car exp)) (k (car (cdr exp)))]
+             [(eq? 'sub1 (car exp))
+              (((interp (car (cdr exp))) env) (lambda (v) (k (sub1 v))))]
+             [(eq? 'number? (car exp))
+              (((interp (car (cdr exp))) env) (lambda (v) (k (number? v))))]
+             [(eq? 'boolean? (car exp))
+              (((interp (car (cdr exp))) env) (lambda (v) (k (boolean? v))))]
              [(eq? 'string? (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (string? v))))]
+              (((interp (car (cdr exp))) env) (lambda (v) (k (string? v))))]
              [(eq? 'symbol? (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (symbol? v))))]
+              (((interp (car (cdr exp))) env) (lambda (v) (k (symbol? v))))]
              [(eq? 'zero? (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (zero? v))))]
+              (((interp (car (cdr exp))) env) (lambda (v) (k (zero? v))))]
              [(eq? 'null? (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (null? v))))]
+              (((interp (car (cdr exp))) env) (lambda (v) (k (null? v))))]
              [(eq? 'car (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (car v))))]
+              (((interp (car (cdr exp))) env) (lambda (v) (k (car v))))]
              [(eq? 'cdr (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (cdr v))))]
-             [(eq? 'caar (car exp)) 
-              (((interp (cadr exp)) env) (lambda (v) (k (caar v))))]
-             [(eq? 'caadr (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (caadr v))))]
-             [(eq? 'cadr (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (cadr v))))]
-             [(eq? 'cadar (car exp)) 
-              (((interp (cadr exp)) env) (lambda (v) (k (cadar v))))]
-             [(eq? 'caddr (car exp)) 
-              (((interp (cadr exp)) env) (lambda (v) (k (caddr v))))]
-             [(eq? 'cadadr (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (cadadr v))))]
-             [(eq? 'cadddr (car exp))
-              (((interp (cadr exp)) env) (lambda (v) (k (cadddr v))))]
-             [(eq? 'if (car exp)) 
-              (((interp (cadr exp)) env)
+              (((interp (car (cdr exp))) env) (lambda (v) (k (cdr v))))]
+             [(eq? 'if (car exp))
+              (((interp (car (cdr exp))) env)
                (lambda (t)
                  (if t
-                     (((interp (caddr exp)) env) k)
-                     (((interp (cadddr exp)) env) k))))]
+                     (((interp (car (cdr (cdr exp)))) env) k)
+                     (((interp (car (cdr (cdr (cdr exp))))) env) k))))]
              [(eq? 'lambda (car exp))
               (k (lambda (a)
                    (lambda (k)
-                     (((interp (caddr exp))
-                       (lambda (x^) (if (eq? x^ (caadr exp)) a (env x^))))
+                     (((interp (car (cdr (cdr exp))))
+                       (lambda (x^)
+                         (if (eq? x^ (car (car (cdr exp)))) a (env x^))))
                       k))))]
              [(eq? 'rho (car exp))
               (k (lambda (a)
                    (lambda (k)
-                     (((interp (caddr exp))
+                     (((interp (car (cdr (cdr exp))))
                        (lambda (x^)
                          (cond
-                          [(eq? x^ (caddr (cadr exp))) 
+                          [(eq? x^ (car (cdr (cdr (car (cdr exp))))))
                            (lambda (a) (lambda (k^) (k a)))]
-                          [(eq? x^ (cadr (cadr exp))) env]
-                          [(eq? x^ (caadr exp)) a]
+                          [(eq? x^ (car (cdr (car (cdr exp))))) env]
+                          [(eq? x^ (car (car (cdr exp)))) a]
                           [#t (env x^)])))
                       k))))]
              [#t
               (((interp (car exp)) env)
                (lambda (v1)
-                 (((interp (cadr exp)) env)
+                 (((interp (car (cdr exp))) env)
                   (lambda (v2)
                     ((v1 v2) k)))))])))))))
 
@@ -271,4 +259,3 @@
 (test "prod-test-rho - Level 3"
  ((nest-interp interp-text 3) prod-test-rho)
  0)
-
