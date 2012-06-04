@@ -186,9 +186,16 @@
  120)
 
 (time ((nest-interp interp-text 1) fact5))
+;; cpu time: 15 real time: 9 gc time: 0
+
 (time ((nest-interp interp-text 2) fact5))
+;; cpu time: 0 real time: 12 gc time: 0
+
 (time ((nest-interp interp-text 3) fact5))
+;; cpu time: 187 real time: 185 gc time: 31
+
 (time ((nest-interp interp-text 4) fact5))
+;; cpu time: 10452 real time: 10469 gc time: 1091
 
 
 ;;;;;;;;; member-test ;;;;;;;;;;

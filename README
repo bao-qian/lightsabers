@@ -7,6 +7,9 @@ Some very interesting code. They are extremely short, yet extremely powerful.
 * infer.ss - a type inferencer for the lambda calculus. It can infer
   infinite types (such as delta, omega, and the Y-combinator)
 
+* bottom-up-typing.ss - a bottom-up type inference algorithm for
+  Hindley-Milner system
+
 * mk-c.ss - a modified miniKanren implementation with a negation
   operator
 
