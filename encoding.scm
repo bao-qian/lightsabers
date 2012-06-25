@@ -83,5 +83,5 @@
 
 
 ;; example use:
-(decode-number (eval `(,! ,lfive)))
+;; (decode-number (eval `(,! ,lfive)))
 
