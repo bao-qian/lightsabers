@@ -1,5 +1,6 @@
 ;; deriving a "Y combinator" for mutual recursion
 
+
 (define even
   (lambda (x)
     (cond
@@ -20,18 +21,18 @@
 ;; Step 1: package up functions, make a copy, create a cycle
 (let ([p ((lambda (eo)
             (cons
-             (lambda (x)
+             (lambda (x)                               ; even
                (cond
                 [(zero? x) #t]
                 [(= 1 x) #f]
-                [else ((cdr (eo eo)) (sub1 x))]))
-             (lambda (x)
+                [else ((cdr (eo eo)) (sub1 x))]))      ; (cdr (eo eo)) is odd
+             (lambda (x)                               ; odd
                (cond
                 [(zero? x) #f]
                 [(= 1 x) #t]
-                [else ((car (eo eo)) (sub1 x))]))))
+                [else ((car (eo eo)) (sub1 x))]))))    ; (car (eo eo)) is even
 
-          (lambda (eo)
+          (lambda (eo)                                 ; identical copy
             (cons
              (lambda (x)
                (cond
@@ -92,6 +93,5 @@
     (even 22)))
 
 
-;; Oh no~ The nice form of Y combinator doesn't seem to work for
-;; mutual recursion! backtrack to Step 2 would be close enough.
-
+;; Oh no. The nice form of Y combinator doesn't seem to show up in
+;; mutual recursion! Backtrack to Step 2 would be good enough.
