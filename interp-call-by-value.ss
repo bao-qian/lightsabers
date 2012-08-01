@@ -3,10 +3,6 @@
 ;; author: Yin Wang (yw21@cs.indiana.edu)
 
 
-(load "pmatch.scm")
-(load "encoding.scm")
-
-
 ;; environment
 (define env0 '())
 
@@ -23,37 +19,30 @@
 
 
 ;; closure "structure"
-(define make-closure
-  (lambda (f env)
-    (list 'closure f env)))
-
-(define closure-func cadr)
-(define closure-env caddr)
-
-(define closure?
-  (lambda (x)
-    (and (pair? x)
-         (eq? (car x) 'closure))))
-
+(struct Closure (f env))
 
 
 ;; cbv interpreter
 (define interp1
   (lambda (exp env)
-    (pmatch exp
-      [,x (guard (symbol? x)) (lookup x env)]
-      [,x (guard (number? x)) x]
-      [(lambda (,x) ,e)
-       (make-closure exp env)]
-      [(,e1 ,e2)
+    (match exp
+      [(? symbol? x) (lookup x env)]
+      [(? number? x) x]
+      [`(lambda (,x) ,e)
+       (Closure exp env)]
+      [`(,e1 ,e2)
        (let ([v1 (interp1 e1 env)]
              [v2 (interp1 e2 env)])
-         (pmatch v1
-           [(closure (lambda (,x) ,e) ,env1)
+         (match v1
+           [(Closure `(lambda (,x) ,e) env1)
             (interp1 e (ext-env x v2 env1))]
-           [,other
+           [other
             (eval `(,v1 ,v2))]))]
-      [,exp (eval exp)])))
+      [`(,op ,e1 ,e2)
+       (let ([v1 (interp1 e1 env)]
+             [v2 (interp1 e2 env)])
+         (eval `(,op ,v1 ,v2)))]
+      [exp (eval exp)])))
 
 
 (define interp
@@ -63,5 +52,14 @@
 
 
 ;; ------------------------ tests -------------------------
-(interp `(((,ltwo ,ltwo) add1) 1))
-;; => 5
+(interp (add1 1))
+;; => 2
+
+(interp (+ 1 2))
+;; => 3
+
+(interp (((lambda (x) (lambda (y) (* x y))) 2) 3))
+;; => 6
+
+(interp ((lambda (x) (* 2 x)) 3))
+;; => 6
