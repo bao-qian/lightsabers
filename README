@@ -1,6 +1,6 @@
 Some very interesting code. They are extremely short, yet extremely powerful.
 
-* cps.ss - a CPS transformer
+* cps.ss - CPS transformer without administrative redexes
 
 * meta-interp.ss - a meta-circular interpreter (reflection tower)
 
@@ -13,7 +13,7 @@ Some very interesting code. They are extremely short, yet extremely powerful.
 * mk-c.ss - a modified miniKanren implementation with a negation
   operator
 
-* interp-call-by-need.ss - a lazy interpreter
+* interp-lazy.ss - a lazy interpreter
 
 * lazy-ski.ss - a compiler from lambda calculus to "lazy combinators"
 
