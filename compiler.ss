@@ -1,13 +1,7 @@
 ;;; An optimizing compiler from Scheme to X86_64.
+;;; author: Yin Wang (yw21@cs.indiana.edu)
 ;;; As final submission for P523 (Spring 2009)
 
-;;; author: Yin Wang (yw21@cs.indiana.edu)
-
-
-
-;;;;;;;;;;;;;;;;;;;;;;
-;; Acknowledgements ;;
-;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Here is my final submission of the complete compiler. I had lots of fun
 ;; in writing it learned many invaluable experiences from the course how to
@@ -32,14 +26,6 @@
 ; convert-assignments to use these primitive instead of pairs. This can
 ; save some heap space.
 
-; - forward-locations. an optimization pass which is supposedly doing
-; what is normally done by move bias. I suspect tht it is more
-; powerful than move bias because it operates on a "semantic level"
-; and doesn't fiddle with the register allocator. Experimental results
-; show that it eliminates all the instructions that move bias
-; eliminates and more.
-
-
 
 ;;;;;;;;;;;;;;;;;;;;
 ;; Removed Passes ;;
@@ -50,11 +36,10 @@
 
 ; - uncover-free, uncover-well-known, optimize-free, optimize-known-call,
 ;   optimize-self-reference:
-;;     contained by convert-closures.
+;;     subsumed by convert-closures.
 
 ; - flatten-set!:
-;;     contained by remove-complex-opera*
-
+;;     subsumed by remove-complex-opera*
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -157,13 +142,13 @@
 ;                    load framework
 ;-------------------------------------------------------------
 
-(optimize-level 0)
+(optimize-level 3)
 (case-sensitive #t)
 (load "match.ss")
 (load "helpers.ss")
 (load "driver.ss")
 (load "fmts.pretty")
-(load "wrapper-orig.ss")
+(load "wrapper.ss")
 
 
 
@@ -176,8 +161,8 @@
 (define *enable-analyze* #f)
 
 (define *enable-forward-locations* #t)
-(define *enable-pre-optimize* #f)
-(define *enable-optimize-jumps* #f)
+(define *enable-pre-optimize* #t)
+(define *enable-optimize-jumps* #t)
 (define *enable-closure-optimization* #t)
 
 
@@ -221,11 +206,9 @@
      [(car ls) #t]
      [else (orall (cdr ls))])))
 
-
 (define location?
   (lambda (x)
     (or (register? x) (frame-var? x) (uvar? x))))
-
 
 (define prim?
   (lambda (x)
@@ -236,16 +219,13 @@
                 make-vector vector-length vector-ref vector-set!
                 void))))
 
-
 (define binop?
   (lambda (x)
-    (memq x '(+ - * logand logor sra mref))))
-
+    (memq x '(+ - * logand logor sra))))
 
 (define relop?
   (lambda (x)
     (memq x '(= < <= >= >))))
-
 
 (define mref?
   (lambda (x)
@@ -253,19 +233,16 @@
       [(mref ,base ,off) #t]
       [,x #f])))
 
-
 ; get conflicting vars/regs of a variable
 (define get-conflicts
-  (lambda (x cg)
-    (cdr (assq x cg))))
-
+  (lambda (x ct)
+    (cdr (assq x ct))))
 
 ; remove a node from a conflict graph (non-destructive)
-(define cg-remove-node
-  (lambda (x cg)
-    (let ([p (assq x cg)])
-      (map (lambda (y) (cons (car y) (remq x (cdr y)))) (remq p cg)))))
-
+(define ct-remove-node
+  (lambda (x ct)
+    (let ([p (assq x ct)])
+      (map (lambda (y) (cons (car y) (remq x (cdr y)))) (remq p ct)))))
 
 ; find the minimum from a list using key as the weight function
 (define find-min
@@ -273,23 +250,18 @@
     (let loop ([min (car ls)] [rest (cdr ls)])
       (cond
        [(null? rest) min]
-       [(< (key (car rest)) (key min))
-        (loop (car rest) (cdr rest))]
-       [else
-        (loop min (cdr rest))]))))
-
+       [(< (key (car rest)) (key min)) (loop (car rest) (cdr rest))]
+       [else (loop min (cdr rest))]))))
 
 ; ((a . b) (c .d)) -> ((a b) (c d))
 (define alist->list
   (lambda (assoc-ls)
     (map (lambda (x) (list (car x) (cdr x))) assoc-ls)))
 
-
 ; ((a b) (c d)) -> ((a . b) (c .d))
 (define list->alist
   (lambda (ls)
     (map (lambda (x) (cons (car x) (cadr x))) ls)))
-
 
 ; make-begin takes a sequence or a begin form
 (define make-begin
@@ -301,7 +273,6 @@
            `(,e* ... ...)]
           [,x `(,x)])))
     (match x
-      [() `(void)]
       [(begin ,e* ...) `(begin ,@(flatten x))]
       [(,e) e]
       [(,e* ...) `(begin ,@(flatten `(begin ,e* ...)))])))
@@ -1579,7 +1550,7 @@
                    (lambda (vb*)
                      (rem `(,off) 'mref
                           (lambda (vo*)
-                            (rem `(,val) 'mref
+                            (rem `(,val) 'rhs
                                  (lambda (vv*)
                                    `((mset! ,@vb* ,@vo* ,@vv*)))))))))]
           [((mref ,base ,off))
@@ -1587,8 +1558,11 @@
                 (lambda (vb*)
                   (rem `(,off) 'mref
                        (lambda (vo*)
-                         (let ([t@ (new-t)])
-                           `((set! ,t@ (mref ,@vb* ,@vo*)) ,@(C `(,t@))))))))]
+                         (case ct
+                           [(fun mref)
+                            (let ([t@ (new-t)])
+                              `((set! ,t@ (mref ,@vb* ,@vo*)) ,@(C `(,t@))))]
+                           [else (C `((mref ,@vb* ,@vo*)))])))))]
           [((,f ,a* ...))
            (rem `(,f) 'fun
                 (lambda (vf*)
@@ -1610,57 +1584,59 @@
 ;; Pass: impose-calling-conventions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; - alloc's at tail positions are handled.
 ; - mset! goes through unchanged.
 ; - mref is added to the return handling part (by excluding it from the cases of calls)
 ; - allocation-pointer-register is listed in call-live list.
 
 (define-who impose-calling-conventions
-  (define new-nfv
+  (define nfv
     (lambda (n)
       (unique-name 'nfv)))
   (define load-params
-    (lambda (fml* regs new)
-      (define load
-        (lambda (fml* regs new serial seq)
-          (cond
-           [(null? fml*) (reverse seq)]
-           [(null? regs)
-            (load (cdr fml*) '() new (add1 serial)
-                  (cons `(set! ,(car fml*) ,(new serial)) seq))]
-           [else
-            (load (cdr fml*) (cdr regs) new serial
-                  (cons `(set! ,(car fml*) ,(car regs)) seq))])))
-      (load fml* regs new 0 '())))
-  (define save-params
-    (lambda (fml* regs new)
-      (let ([swap (lambda (x)
-                   (match x
-                     [(set! ,dst ,src)
-                      `(set! ,src ,dst)]))])
-        (map swap (load-params fml* regs new)))))
+    (lambda (fml* regs fv-fun fv-n seq)
+      (cond
+       [(null? fml*) (reverse seq)]
+       [(null? regs)
+        (load-params (cdr fml*) '() fv-fun (add1 fv-n)
+                     (cons `(set! ,(car fml*) ,(fv-fun fv-n)) seq))]
+       [else
+        (load-params (cdr fml*) (cdr regs) fv-fun fv-n
+                     (cons `(set! ,(car fml*) ,(car regs)) seq))])))
+  (define rev-load
+    (lambda (loads regs fvs)
+      (cond
+       [(null? loads) (reverse (append regs fvs))]
+       [else
+        (match (car loads)
+          [(set! ,dst ,src) (guard (register? src))
+           (rev-load (cdr loads) (cons `(set! ,src ,dst) regs) fvs)]
+          [(set! ,dst ,src)
+           (rev-load (cdr loads) regs (cons `(set! ,src ,dst) fvs))])])))
   (define get-nfv
     (lambda (loads)
+;      (filter (lambda (x) (not register?)) (map caddr loads))
       (cond
        [(null? loads) '()]
        [else
         (match (car loads)
-          [(set! ,dst ,src) (guard (register? dst))
+          [(set! ,dst ,src) (guard (register? src))
            (get-nfv (cdr loads))]
           [(set! ,dst ,src)
-           (cons dst (get-nfv (cdr loads)))])])))
+           (cons src (get-nfv (cdr loads)))])])))
   (define impose
-    (lambda (rp ct nfv*)
+    (lambda (rp ct new-fv*)
       (lambda (x)
         (match x
           [(if ,[test] ,[conseq] ,[alt])
            `(if ,test ,conseq ,alt)]
-          [(begin ,[(impose rp 'seq nfv*) -> e*] ... ,[tail])
+          [(begin ,[(impose rp 'seq new-fv*) -> e*] ... ,[tail])
            `(begin ,e* ... ,tail)]
           [(,m/set! ,x ... (,op ,y ,z)) (guard (memq m/set! '(set! mset!))
                                                (or (binop? op) (eq? op 'mref)))
            `(,m/set! ,x ... (,op ,y ,z))]
           [(,m/set! ,var ... (,f ,x* ...)) (guard (memq m/set! '(set! mset!)))
-           (make-begin `(,((impose rp 'rhs nfv*) `(,f ,x* ...))
+           (make-begin `(,((impose rp 'rhs new-fv*) `(,f ,x* ...))
                          (,m/set! ,var ... ,return-value-register)))]
           [(,m/set! ,var ... ,val) (guard (memq m/set! '(set! mset!)))
            `(,m/set! ,var ... ,val)]
@@ -1669,31 +1645,32 @@
            `(,relop ,a ,b)]
           [(,triv ,loc* ...) (guard (not (binop? triv))
                                     (not (eq? triv 'mref))
-                                    (eq? ct 'tail))    ; tail-call
-           (let ([save* (save-params loc* parameter-registers index->frame-var)])
+                                    (eq? ct 'tail))
+           (let* ([l* (load-params loc* parameter-registers index->frame-var 0 '())]
+                  [rl* (rev-load l* '() '())])
              `(begin
-                ,@save*
-                (set! ,return-address-register ,rp)
+                ,@rl*
+                (set! ,return-address-register ,rp) ; tail-call optimization
                 (,triv ,frame-pointer-register
                        ,return-address-register
                        ,allocation-pointer-register
-                       ,@(map cadr save*))))]
+                       ,@(map cadr rl*))))]
           [(,triv ,loc* ...) (guard (not (binop? triv))
                                     (not (eq? triv 'mref))
                                     (not (eq? ct 'tail)))
-           (let ([save* (save-params loc* parameter-registers new-nfv)]
-                 [label (unique-label 'ret)])
-             (set-box! nfv* (cons (get-nfv save*) (unbox nfv*)))
-             `(return-point ,label                           ; diff
+           (let* ([l* (load-params loc* parameter-registers nfv 0 '())]
+                  [rl* (rev-load l* '() '())]
+                  [label (unique-label 'ret)])
+             (set-box! new-fv* (cons (get-nfv l*) (unbox new-fv*)))
+             `(return-point ,label      ;;; difference
                (begin
-                 ,@save*
-                 (set! ,return-address-register ,label)      ; diff
+                 ,@rl*
+                 (set! ,return-address-register ,label) ;;; difference
                  (,triv ,frame-pointer-register
                         ,return-address-register
                         ,allocation-pointer-register
-                        ,@(map cadr save*)))))]
-          [,x
-              `(begin (set! ,return-value-register ,x)       ; return a value
+                        ,@(map cadr rl*)))))]
+          [,x `(begin (set! ,return-value-register ,x)
                       (,rp ,frame-pointer-register
                            ,return-value-register
                            ,allocation-pointer-register))]))))
@@ -1701,17 +1678,15 @@
     (lambda (bd fml*)
       (match bd
         [(locals (,locals* ...) ,tail)
-         (let* ([load* (load-params fml*
-                                    parameter-registers
-                                    index->frame-var)]
+         (let* ([loads (load-params fml* parameter-registers index->frame-var 0 '())]
                 [rp (unique-name 'rp)]
-                [nfv* (box '())]
-                [tail ((impose rp 'tail nfv*) tail)])
-           `(locals (,locals* ... ,@fml* ,rp ,@(apply append (unbox nfv*)))
-              (new-frames ,(unbox nfv*)
+                [new-fv* (box '())]
+                [tail ((impose rp 'tail new-fv*) tail)])
+           `(locals (,locals* ... ,@fml* ,rp ,@(apply append (unbox new-fv*)))
+              (new-frames ,(unbox new-fv*)
                ,(make-begin
                  `((set! ,rp ,return-address-register)
-                   ,@load*
+                   ,@loads
                    ,tail)))))])))
   (lambda (x)
     (match x
@@ -1731,13 +1706,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define uncover-conflict-helper
-  (lambda (x ct with?)
+  (lambda (x ct rec? with?)
     (define spill* '())
+    (define call-live* '())
     (define add-conflicts
       (lambda (x ls ct)
         (letrec ([add-conf1
                   (lambda (x ls ct)
-                    (if (uvar? x)
+                    (if (rec? x)
                         (let ([slot (assq x ct)])
                           (if slot
                               (set-cdr! slot (union (cdr slot)
@@ -1769,6 +1745,11 @@
                   (uncover `(,val) live* f-live*))]
           [((return-point ,label ,tail))
            (set! spill* (union spill* (filter uvar? live*)))
+           (set! call-live*
+                 (union call-live*
+                        (filter (lambda (x)
+                                  (or (uvar? x) (frame-var? x)))
+                                live*)))
            (uncover `(,tail) live* f-live*)]
           [(,h ,t ,t* ...)
            (let ([lt* (uncover `(,t ,t* ...) live* f-live*)])
@@ -1783,12 +1764,12 @@
            (union live* f-live*
                   (uncover `(,x) live* f-live*)
                   (uncover `(,y) live* f-live*))]
-          [((,target ,call-live* ...))
-           (union live* (uncover `(,target) live* f-live*) call-live*)]
+          [((,target ,c-live* ...))
+           (union live* (uncover `(,target) live* f-live*) c-live*)]
           [(,x) (guard (with? x)) `(,x)]
           [,other '()])))
     (let ([x (uncover x '() '())])
-      (values x spill*))))
+      (values x spill* call-live*))))
 
 
 
@@ -1804,19 +1785,20 @@
        `(letrec ([,label* (lambda () ,body*)] ...) ,body)]
       [(locals (,uvar* ...)
          (new-frames (,frame** ...) ,tail))
-       (let ([cg (map list uvar*)]
+       (let ([ct (map (lambda (x) (cons x '())) uvar*)]
              [tail^ (if *enable-forward-locations*
                         (forward-locations tail '())
                         tail)])
-         (letv* ([(live* spill*)
-                  (uncover-conflict-helper tail^ cg
-                   (lambda (x) (or (uvar? x) (frame-var? x))))])
+         (letv* ([(live* spill* call-live*)
+                  (uncover-conflict-helper
+                   tail^
+                   ct uvar? (lambda (x) (or (uvar? x) (frame-var? x))))])
            `(locals (,@(difference uvar* spill*))
               (new-frames (,frame** ...)
-                (spills ,spill*
-                  (frame-conflict ,cg
-                    (call-live ,spill*
-                            ,tail^)))))))])))
+                 (spills ,spill*
+                     (frame-conflict ,ct
+                         (call-live ,call-live* 
+                             ,tail^)))))))])))
 
 
 
@@ -1827,20 +1809,21 @@
        `(letrec ([,label* (lambda () ,body*)] ...) ,body)]
       [(locals (,local* ...)
          (ulocals (,ulocal* ...)
-           (locate (,home* ...)
-             (frame-conflict ,fv-cg ,tail))))
-       (let ([cg (map list (union local* ulocal*))]
+                  (locate (,home* ...)
+                    (frame-conflict ,fv-ct ,tail))))
+       (let ([ct (map (lambda (x) (cons x '())) (union local* ulocal*))]
              [tail^ (if *enable-forward-locations*
                         (forward-locations tail ulocal*)
                         tail)])
-         (letv* ([(live* spill*)
-                  (uncover-conflict-helper tail^ cg
-                   (lambda (x) (or (uvar? x) (register? x))))])
+         (let-values ([(live* spill* call-live*)
+                       (uncover-conflict-helper
+                        tail^
+                        ct uvar? (lambda (x) (or (uvar? x) (register? x))))])
            `(locals (,local* ...)
               (ulocals (,ulocal* ...)
                        (locate (,home* ...)
-                         (frame-conflict ,fv-cg
-                                         (register-conflict ,cg ,tail^)))))))]
+                         (frame-conflict ,fv-ct
+                                         (register-conflict ,ct ,tail^)))))))]
       [(locate (,home* ...) ,tail) `(locate (,home* ...) ,tail)])))
 
 
@@ -1855,9 +1838,9 @@
   (define homes-of
     (lambda (vars* home*)
       (let ([m1 (map (lambda (x)
-                       (if (frame-var? x) (list x x) (assq x home*)))
+                       (if (frame-var? x) (cons x x) (assq x home*)))
                      vars*)])
-        (map cadr (filter (lambda (x) x) m1)))))
+        (map cdr (filter (lambda (x) x) m1)))))
   (define find-avail
     (lambda (used)
       (let loop ([idx 0])
@@ -1866,28 +1849,28 @@
            [(memq fv* used) (loop (add1 idx))]
            [else fv*])))))
   (define find-homes
-    (lambda (spill* cg home*)
+    (lambda (spill* ct home*)
       (let loop ([spill* spill*] [home* home*])
         (cond
-         [(null? spill*) (reverse home*)]
+         [(null? spill*) (reverse (alist->list home*))]
          [else
           (let ([avail (find-avail
-                        (homes-of (get-conflicts (car spill*) cg) home*))])
+                        (homes-of (get-conflicts (car spill*) ct) home*))])
             (loop (cdr spill*)
-                  (cons (list (car spill*) avail) home*)))]))))
+                  (cons (cons (car spill*) avail) home*)))]))))
   (define Body
     (lambda (body)
       (match body
         [(locals (,local* ...)
            (new-frames (,nfv** ...)
              (spills (,spill* ...)
-               (frame-conflict ,cg
+               (frame-conflict ,ct
                  (call-live (,call-live* ...) ,tail)))))
-         (let ([home* (find-homes spill* cg '())])
+         (let ([home* (find-homes spill* ct '())])
            `(locals (,local* ...)
               (new-frames (,nfv** ...)
                           (locate (,home* ...)
-                            (frame-conflict ,cg
+                            (frame-conflict ,ct
                               (call-live (,call-live* ...) ,tail))))))]
         [,body (error who "invalid Body ~s" body)])))
   (lambda (x)
@@ -1904,19 +1887,25 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define-who assign-new-frame
-  ;; find largest fv number in a list
   (define frame-size
-      (lambda (x)
-        (match x
-          [(,[fs*] ...) (apply max 0 fs*)]
-          [,x (if (frame-var? x) (+ (frame-var->index x) 1) 0)])))
-  ;; assign frame locations to new-frames starting from top of call live vars
+    (lambda (call-live* home*)
+      (let ((home* (list->alist home*)))
+        (let loop ([rest call-live*] [max -1])
+          (cond
+           [(null? rest) (add1 max)]
+           [else
+            (let ([idx (frame-var->index (cdr (assq (car rest) home*)))])
+              (cond
+               [(> idx max) (loop (cdr rest) idx)]
+               [else (loop (cdr rest) max)]))])))))
   (define do-assign
     (lambda (fs)
       (lambda (nfv*)
-        (let ([fv* (map (lambda (x) (index->frame-var (+ fs x)))
-                        (enumerate nfv*))])
-          (map list nfv* fv*)))))
+        (let loop ([rest nfv*] [idx fs] [assigned '()])
+          (cond
+           [(null? rest) assigned]
+           [else (loop (cdr rest) (add1 idx)
+                       (cons `(,(car rest) ,(index->frame-var idx)) assigned))])))))
   (define assign
     (lambda (fs)
       (lambda (x)
@@ -1926,12 +1915,10 @@
           [(begin ,[e*] ... ,[tail])
            `(begin ,e* ... ,tail)]
           [(return-point ,label ,tail)
-           (let ([offset (fxsll fs align-shift)])
-             `(begin (set! ,frame-pointer-register
-                           (+ ,frame-pointer-register ,offset))
+           (let ([bn (fxsll fs align-shift)])
+             `(begin (set! ,frame-pointer-register (+ ,frame-pointer-register ,bn))
                      (return-point ,label ,tail)
-                     (set! ,frame-pointer-register
-                           (- ,frame-pointer-register ,offset))))]
+                     (set! ,frame-pointer-register (- ,frame-pointer-register ,bn))))]
           [,x x]))))
   (lambda (x)
     (match x
@@ -1940,13 +1927,13 @@
       [(locals (,local* ...)
          (new-frames (,nfv** ...)
             (locate (,home* ...)
-              (frame-conflict ,cg
+              (frame-conflict ,ct
                 (call-live (,call-live* ...) ,tail)))))
-       (let ([fs (frame-size (map cadr home*))])
+         (let ([fs (frame-size call-live* home*)])
            `(locals (,(difference local* `(,nfv** ... ...)) ...)
               (ulocals ()
                 (locate (,home* ... ,(map (do-assign fs) nfv**) ... ...)
-                  (frame-conflict ,cg ,((assign fs) tail))))))]
+                  (frame-conflict ,ct ,((assign fs) tail))))))]
       [,x (error who "invalid Program ~s" x)])))
 
 
@@ -1962,7 +1949,7 @@
       (let ([m1 (map (lambda (x)
                        (if (frame-var? x) (cons x x) (assq x home*)))
                      vars*)])
-        (map cadr (filter (lambda (x) x) m1)))))
+        (map cdr (filter (lambda (x) x) m1)))))
 
   (define find-avail
     (lambda (used)
@@ -1973,15 +1960,15 @@
            [else fv*])))))
 
   (define find-homes
-    (lambda (spill* cg home*)
+    (lambda (spill* ct home*)
       (let loop ([spill* spill*] [home* home*])
         (cond
-         [(null? spill*) (reverse home*)]
+         [(null? spill*) (reverse (alist->list home*))]
          [else
           (let ([avail (find-avail
-                        (homes-of (get-conflicts (car spill*) cg) home*))])
+                        (homes-of (get-conflicts (car spill*) ct) home*))])
             (loop (cdr spill*)
-                  (cons (list (car spill*) avail) home*)))]))))
+                  (cons (cons (car spill*) avail) home*)))]))))
   (define Body
     (lambda (body)
       (match body
@@ -1989,12 +1976,12 @@
            (ulocals (,ulocal* ...)
                     (spills (,spill* ...)
                             (locate (,home* ...)
-                              (frame-conflict ,cg ,tail)))))
-         (let ([home* (find-homes spill* cg (reverse home*))])
+                              (frame-conflict ,ct ,tail)))))
+         (let ([home* (find-homes spill* ct (reverse (list->alist home*)))])
            `(locals (,local* ...)
               (ulocals (,ulocal* ...)
                        (locate ,home*
-                         (frame-conflict ,cg ,tail)))))]
+                         (frame-conflict ,ct ,tail)))))]
         [(locate (,home* ...) ,body) `(locate (,home* ...) ,body)]
         [,body (error who "invalid Body ~s" body)])))
   (lambda (x)
@@ -2015,30 +2002,30 @@
     (define homes-of
       (lambda (vars* homes*)
         (let ([m1 (map (lambda (x)
-                         (if (register? x) (list x x) (assq x homes*)))
+                         (if (register? x) (cons x x) (assq x homes*)))
                        vars*)])
-          (map cadr (filter (lambda (x) x) m1)))))
+          (map cdr (filter (lambda (x) x) m1)))))
     (define find-homes
-      (lambda (cg regs)
-        (let loop ([cg cg] [homes* '()])
+      (lambda (ct regs)
+        (let loop ([ct ct] [homes* '()])
           (cond
-           [(null? cg) (reverse homes*)]
+           [(null? ct) (reverse (alist->list homes*))]
            [else
             (let ([avails (difference regs
-                            (homes-of (get-conflicts (caar cg) cg) homes*))])
+                            (homes-of (get-conflicts (caar ct) ct) homes*))])
               (cond
-               [(null? avails) (loop (cdr cg) homes*)]
-               [else (loop (cdr cg)
-                           (cons (list (caar cg) (car avails)) homes*))]))]))))
+               [(null? avails) (loop (cdr ct) homes*)]
+               [else (loop (cdr ct)
+                           (cons (cons (caar ct) (car avails)) homes*))]))]))))
     (define sort-conflict-graph
-      (lambda (cg ulocal*)
-        (let ([ut (map (lambda (x) (assq x cg)) ulocal*)])
-          (append ut (let loop ([cg (difference cg ut)] [out '()])
+      (lambda (ct ulocal*)
+        (let ([ut (map (lambda (x) (assq x ct)) ulocal*)])
+          (append ut (let loop ([ct (difference ct ut)] [out '()])
                        (cond
-                        [(null? cg) out]
+                        [(null? ct) out]
                         [else
-                         (let ([x1 (find-min length cg)])
-                           (loop (cg-remove-node (car x1) cg)
+                         (let ([x1 (find-min length ct)])
+                           (loop (ct-remove-node (car x1) ct)
                                  (cons x1 out)))]))))))
     (match x
       [(letrec ([,label* (lambda () ,[body*])] ...) ,[body])
@@ -2046,10 +2033,10 @@
       [(locals (,local* ...)
          (ulocals (,ulocal* ...)
                   (locate (,frame-home* ...)
-                    (frame-conflict ,fv-cg
-                                    (register-conflict ,cg ,tail)))))
+                    (frame-conflict ,fv-ct
+                                    (register-conflict ,ct ,tail)))))
        (let ([uvar* (append local* ulocal*)])
-         (let ([home* (find-homes (sort-conflict-graph cg ulocal*) registers)])
+         (let ([home* (find-homes (sort-conflict-graph ct ulocal*) registers)])
            (let ([spill* (difference uvar* (map car home*))])
              (cond
               [(null? spill*) `(locate (,frame-home* ... ,home* ...) ,tail)]
@@ -2059,7 +2046,7 @@
                     (ulocals (,ulocal* ...)
                              (spills (,spill* ...)
                                      (locate (,frame-home* ...)
-                                       (frame-conflict ,fv-cg ,tail))))))]
+                                       (frame-conflict ,fv-ct ,tail))))))]
               [else
                (error 'assign-registers
                       "unspillable variables (~s) have been spilled"
@@ -2076,7 +2063,7 @@
            (ulocals (,ulocal* ...)
              (spills (,spill* ...)
                (locate (,home* ...)
-                 (frame-conflict ,cg ,tail))))) #f]
+                 (frame-conflict ,ct ,tail))))) #f]
         [(locate (,home* ...) ,tail) #t]
         [,x (error who "invalid Body ~s" x)])))
   (lambda (x)
@@ -2282,7 +2269,7 @@
 ; mset! and mref are passed along.
 
 ; helper for both finalize-frame-locations and finalize-locations
-(define finalize-helper
+(define finalize
   (lambda (x env final?)
     (define lookup
       (lambda (v env)
@@ -2299,10 +2286,10 @@
           (ulocals (,ulocal* ...)
             (locate ([,uvar* ,loc*] ...)
               (frame-conflict ,ct
-                 ,(finalize-helper tail `((,uvar* . ,loc*) ...) final?)))))]
+                 ,(finalize tail `((,uvar* . ,loc*) ...) final?)))))]
       [(locate ([,uvar* ,loc*] ...) ,tail)
        (if final?
-           (finalize-helper tail `((,uvar* . ,loc*) ...) final?)
+           (finalize tail `((,uvar* . ,loc*) ...) final?)
            `(locate ([,uvar* ,loc*] ...) ,tail))]
       [(begin , [ef*] ... , [tail])
        `(begin ,ef* ... ,tail)]
@@ -2325,8 +2312,8 @@
       [,v (guard (uvar? v)) (lookup v env)]
       [,x x])))
 
-(define finalize-frame-locations (lambda (x) (finalize-helper x '() #f)))
-(define finalize-locations       (lambda (x) (finalize-helper x '() #t)))
+(define finalize-frame-locations (lambda (x) (finalize x '() #f)))
+(define finalize-locations       (lambda (x) (finalize x '() #t)))
 
 
 
@@ -2969,7 +2956,7 @@
 ;;         (nop)
 ;;         (iota-fill!$3 rbp r15 rdx fv0 r8 r9))
 ;;       (begin
-;;         (set! rax 30)
+;;         (set! rax 30) 
 ;;         (r15 rbp rax rdx))))
 
 
@@ -3105,9 +3092,9 @@
                             [(and (int64? (car ey*)) (not (int32? (car ey*)))) `(,y)]
                             [else ey*])])
                  (values `((,op ,@ex* ,@ey*)) s))]))]
-          [((,target ,call-live* ...))
+          [((,target ,c-live* ...))
            (letv* ([(et* s1) (forward `(,target) s #f)])
-             (values `((,@et* ,call-live* ...)) s))]
+             (values `((,@et* ,c-live* ...)) s))]
           [((nop)) (values `((nop)) s)]
           [(,x) (values (list (lookup x s)) s)])))
     (letv* ([(ex* s1) (forward x '() #f)]) ex*)))
@@ -3173,10 +3160,10 @@
                    [(ey* ly*) (backward `(,y) live* f-live*)])
              (values `((,op ,@ex* ,@ey*))
                      (union live* f-live* lx* ly*)))]
-          [((,target ,call-live* ...))
+          [((,target ,c-live* ...))
            (letv* ([(et* lt*) (backward `(,target) live* f-live*)])
-             (values `((,@et* ,call-live* ...))
-                     (union live* lt* call-live*)))]
+             (values `((,@et* ,c-live* ...))
+                     (union live* lt* c-live*)))]
           [((nop)) (values `((nop)) live*)]
           [(,x) (guard (location? x)) (values `(,x) `(,x))]
           [(,x) (values `(,x) '())])))
@@ -3276,7 +3263,7 @@
               [else
                (values `((set! ,x ,y))
                        (let ([env^ (rem `(,y) env)])
-                         (if (and (not (frame-var? x)) (location? y))
+                         (if (and (not (frame-var? x)) (location? y)) 
                              (ext y x env^)
                              env^))
                        (if (and (not (frame-var? x)) (location? y))
@@ -3291,7 +3278,7 @@
                      (append `(,@(make-live base) ,@(make-live off))
                              live1 live)))]
           [((mref ,base ,off))
-           (values `((mref ,base ,off)) (rem `(,base ,off) env)
+           (values `((mref ,base ,off)) (rem `(,base ,off) env) 
                    `(,@(make-live base) ,@(make-live off)))]
           [((,op ,x ,y))
            (letv* ([(ex* env1 live1) (backward `(,x) env live)]
@@ -3655,6 +3642,8 @@
 ;                         test
 ;-------------------------------------------------------------
 
+
+
 (compiler-passes '(
   parse-scheme
   convert-complex-datum
@@ -3700,1249 +3689,8 @@
 
 (load "tests.ss")
 (tracer #f)
-;; (test-all)
+(test-all)
 
 ;; (test-all-analyze)
-;; (test-one (nth 100 tests))
-
-;; (trusted-passes
-;;  '(impose-calling-conventions
-;;    uncover-frame-conflict))
-
-
-(define take-between
-  (lambda (ls n m)
-    (define take1
-      (lambda (ls n m cur)
-        (cond
-         [(= cur m) '()]
-         [(< cur n) (take1 (cdr ls) n m (add1 cur))]
-         [else
-          (cons (car ls) (take1 (cdr ls) (add1 n) m (add1 cur)))])))
-    (take1 ls n m 0)))
-
-;; (take-between '(a b c d e f) 2 4)
-
-(define test-between
-  (lambda (n m)
-    (cond
-     [(>= n m) (void)]
-     [else
-      (printf "test ~a~n" n)
-      (test-one (nth n tests))
-      (test-between (add1 n) m)])))
-
-;; (test-between 112 163)
-
-
-
-
-;-------------------------------------------------------------
-;                a new register/frame allocator
-;-------------------------------------------------------------
-(define mark-ends
-  (lambda (seq)
-    (define put-end
-      (lambda (ls)
-        (cond
-         [(null? ls) '(())]
-         [else
-          `((end ,@ls))])))
-    (define uncover
-      (lambda (seq live*)
-        (match seq
-          [((begin ,s ...))
-           (letv* ([(es* live1*) (uncover `(,s ...) live*)])
-             (values `(,(make-begin es*)) live1*))]
-          [((if ,test ,conseq ,alt))
-           (letv* ([(ec* livec*) (uncover `(,conseq) live*)]
-                   [(ea* livea*) (uncover `(,alt) live*)]
-                   [(et1* livet1*) (uncover `(,test) livec*)]
-                   [(et2* livet2*) (uncover `(,test) livea*)]
-                   [(et* livet*) (uncover `(,test) (union livec* livea*))]
-                   [endc (difference livet1* livec*)]
-                   [enda (difference livet2* livea*)])
-             (values `((if ,@et*
-                           ,(make-begin `((end ,@endc) ,@ec*))
-                           ,(make-begin `((end ,@enda) ,@ea*))))
-                     livet*))]
-          [((set! ,x ,y))
-           (letv* ([(ey* live1*) (uncover `(,y) live*)]
-                   [new-live* (difference live1* live*)])
-             (values `((set! ,x ,@ey* ,new-live*))
-                     (difference live1* (list x))))]
-          [((mset! ,base ,off ,val))
-           (letv* ([(eb* liveb*) (uncover `(,base) live*)]
-                   [(eo* liveo*) (uncover `(,off) live*)]
-                   [(ev* livev*) (uncover `(,val) live*)]
-                   [live1* (union liveb* liveo* livev*)]
-                   [new-live* (difference live1* live*)])
-             (values `((mset! ,@eb* ,@eo* ,@ev* ,new-live*)) live1*))]
-          [((,op ,u ,v)) (guard (or (eq? op 'mref)
-                                    (relop? op)
-                                    (binop? op)))
-           (letv* ([(eu* liveu*) (uncover `(,u) live*)]
-                   [(ev* livev*) (uncover `(,v) live*)]
-                   [live1* (union liveu* livev*)]
-                   [new-live* (difference live1* live*)])
-             (values `((,op ,@eu* ,@ev* ,new-live*)) live1*))]
-          [((nop))
-           (values `() live*)]
-          [((true))
-           (values `((true)) live*)]
-          [((false))
-           (values `((false)) live*)]
-          [((,target ,[(lambda (x) (uncover (list x) live*))
-                       -> arg* livea*] ...))
-           (let* ([live1* (union live* `(,target)
-                                 (filter uvar? (apply append livea*)))]
-                  [new-live* (difference live1* live*)])
-             (values `((,target ,arg* ... ... ,new-live*)) live1*))]
-          [(,h ,t ,t* ...)
-           (letv* ([(et* livet*) (uncover `(,t ,t* ...) live*)]
-                   [(eh* live1*) (uncover `(,h) livet*)]
-                   [new-live* (difference live1* live*)])
-             (values `(,@eh* ,@et*) live1*))]
-          [(,x)
-           (cond
-            [(uvar? x)
-             (values `(,x) (union (list x) live*))]
-            [else
-             (values `(,x) live*)])])))
-    (letv* ([(seq^ live^) (uncover seq '())])
-      seq^)))
-
-
-;; (mark-ends
-;;  '((if (= 0 n.8)
-;;        (c$3 x.6)
-;;        (begin (set! t.27 (- n.8 8)) (e$2 t.27 p.7 x.6)))))
-
-
-
-;; (mark-ends
-;;  '(begin
-;;     (set! x.1 0)
-;;     (set! y.2 (+ x.1 1))
-;;     (set! z.3 (* y.2 2))
-;;     (f.4 x.1 z.3)))
-
-
-
-
-;-------------------------------------------------------------
-;     operations on the model (typing environment?)
-;-------------------------------------------------------------
-
-;; Find x's home in env, return #f if it's not in it. (look up by key)
-(define lookup
-  (lambda (v env)
-    (cond
-     [(null? env) #f]
-     [(eq? (caar env) v)
-      (cdar env)]
-     [else
-      (lookup v (cdr env))])))
-
-; (lookup 'x '([x . fv1]))
-
-
-
-;; Reverse lookup for the owner of a home. (lookup by value)
-(define lookup-value
-  (lambda (v env)
-    (cond
-     [(null? env) #f]
-     [(eq? (cdar env) v)                ; difference
-      (caar env)]
-     [else
-      (lookup-value v (cdr env))])))
-
-;; (lookup-value 'r8 '([x.1 . r9] [y.2 . r8]))
-
-
-
-;; remove a list of residents ls from env (delete by key)
-(define delete
-  (lambda (ls env)
-    (cond
-     [(null? env) '()]
-     [(memq (caar env) ls)
-      (delete ls (cdr env))]
-     [else
-      (cons (car env)
-            (delete ls (cdr env)))])))
-
-;; (delete '(x z) '([x . r0] [y . r1] [z . r2]))
-
-(define delete1
-  (lambda (ls env)
-    (cond
-     [(null? env) '()]
-     [(memq (caar env) ls)
-      => (lambda (x)
-           (delete1 (remq (car x) ls) (cdr env)))]
-     [else
-      (cons (car env)
-            (delete1 ls (cdr env)))])))
-
-;; (delete1 '(x z) '([x . r0] [y . r1] [z . r2] [x . fv0]))
-
-
-;; remove a list of homes ls from env (delete by value)
-(define delete-values
-  (lambda (ls env)
-    (cond
-     [(null? env) '()]
-     [(memv (cdar env) ls)              ; difference
-      (delete-values ls (cdr env))]
-     [else
-      (cons (car env)
-            (delete-values ls (cdr env)))])))
-
-;; (delete-values '(r1 r2) '([x . r0] [z . r1] [y . r2]))
-
-
-
-;; Move out the resident in home, and let var occupy it. This is a
-;; queue of FIFO order. Note that var can also occupy a space in
-;; another environment (register or stack) at the same time.
-(define occupy
-  (lambda (var home env)
-    (append (delete-values `(,home) (delete `(,var) env))
-            `((,var . ,home)))))
-
-
-
-;---------------------------------------------
-(define find-register
-  (lambda (regs renv)
-    (let* ([used (map cdr renv)]
-           [avail (difference regs used)])
-      (cond
-       [(null? avail) #f]
-       [else
-        (car avail)]))))
-
-
-
-(define find-frame
-  (lambda (fenv start)
-    (let loop ([idx start])
-      (let ([fv (index->frame-var idx)])
-        (cond
-         [(lookup-value fv fenv)
-          (loop (add1 idx))]
-         [else fv])))))
-
-
-;; (find-frame
-;;  '([i.5 . fv0]
-;;    [n.4 . fv1]
-;;    [z.10 . fv3])
-;;  1)
-
-
-
-
-;--------------------- SAVE ------------------------
-(define save-var
-  (lambda (vars renv fenv start)
-    (define save1
-      (lambda (v renv fenv)
-        (cond
-         [(lookup v fenv)                   ; already in stack, do nothing
-          (values '() renv fenv)]
-         [(lookup v renv)
-          => (lambda (reg)
-               (let ([fv (find-frame fenv start)])
-                 (values `((set! ,fv ,reg)) renv (occupy v fv fenv))))]
-         [else
-          (error 'save-var "variable is not bound ~a" v)])))
-    (let loop ([vars vars] [ins '()] [renv renv] [fenv fenv])
-      (cond
-       [(null? vars)
-        (values ins renv fenv)]
-       [else
-        (letv* ([(ins+ renv fenv) (save1 (car vars) renv fenv)])
-          (loop (cdr vars) (append ins ins+) renv fenv))]))))
-
-;; (save-var '(x.1 y.2 z.3)
-;;           '([x.1 . r8] [y.2 . r9] [z.3 . r10])
-;;           '([x.1 . fv0])
-;;           10)
-
-
-
-
-;--------------------- LOAD ------------------------
-;; Load variables listed *simultaneously* into registers. If they
-;; currently live in frames, swap other variables into frame when
-;; needed, but avoid swapping vars, as they ALL need to be in
-;; registers!
-
-(define load-var
-  (lambda (vars renv fenv)
-    (define find-victim
-      (lambda (renv exclude)
-        (let ([env (delete exclude renv)])
-          (cond
-           [(null? env)
-            (error 'find-victim
-                   "failed to find a register for swapping")]
-           [else
-            (let ([rs (filter (lambda (p) (lookup (lookup-value (cdr p) renv) fenv))
-                              env)])
-              (cond
-               [(null? rs)
-                (values (caar env) (cdar env))]
-               [else
-                (values (caar rs) (cdar rs))]))]))))
-    (define load1
-      (lambda (v renv fenv)
-        (cond
-         [(or (uvar? v) (label? v))
-          (let([vhome (or (lookup v renv)
-                          (lookup v fenv))])
-            (cond
-             [(or (not vhome) (frame-var? vhome)) ; need a new register
-              (cond
-               [(find-register general-registers renv) ; free register found
-                => (lambda (reg)
-                     (let ([load (cond
-                                  [vhome `((set! ,reg ,vhome))]
-                                  [(label? v) `((set! ,reg ,v))]
-                                  [else '()])])
-                       (values load (occupy v reg renv) fenv)))]
-               [else                      ; all registers in use
-                (letv* ([(victim victim-home) (find-victim renv vars)]
-                        [(save-ins renv fenv) (save-var (list victim) renv fenv 0)]
-                        [load (if vhome `((set! ,victim-home ,vhome)) '())])
-                  (values (append save-ins load)
-                          (occupy v victim-home renv)
-                          fenv))])]
-             [else
-              (values '() renv fenv)]))]
-         [else
-          (values '() renv fenv)])))
-    (let loop ([vars vars] [ins '()] [renv renv] [fenv fenv])
-      (cond
-       [(null? vars)
-        (values ins renv fenv)]
-       [else
-        (letv* ([(ins+ renv fenv) (load1 (car vars) renv fenv)])
-          (loop (cdr vars) (append ins ins+) renv fenv))]))))
-
-;; (load-var '(x.1 y.2 z.3)
-;;   '([u.6 . r8] [v.7 . r9] [z.3 . r10])
-;;   '([x.1 . fv0] [y.2 . fv1] [u.6 . fv2]))
-
-;; (load-var '(x.1 y.2 z.3)
-;;   '([u.6 . r8] [v.7 . r9] [w.8 . r10])
-;;   '([x.1 . fv0] [y.2 . fv1]))
-
-
-
-
-;-------------------- SHUFFLE -----------------------
-(define copy
-  (lambda (dest src renv fenv)
-    (let* ([name (or (lookup-value src renv)
-                     (lookup-value src fenv)
-                     (and (number? src) src)
-                     (and (label? src) src))])
-      (cond
-       [(not name)
-        (values '() renv fenv)]
-       [else
-        (let* ([found1 (lookup name renv)]
-               [found2 (lookup name fenv)]
-               [ins (if (or (eq? found1 dest) (eq? found2 dest))
-                        '() `((set! ,dest ,src)))]
-               [renv^ (if (register? dest) (occupy name dest renv) renv)]
-               [fenv^ (if (frame-var? dest) (occupy name dest fenv) fenv)])
-          (values ins renv^ fenv^))]))))
-
-
-
-(define cycle?
-  (lambda (ls)
-    (eq? '%o (car ls))))
-
-
-
-(define find-paths
-  (lambda (moves)
-    (define find
-      (lambda (moves start)
-        (let loop ([curr start] [visited (list start)])
-          (let ([p (assq curr moves)])
-            (cond
-             [(not p) (cons '%c visited)]
-             [(memq (cdr p) visited)
-              (cons '%o visited)]
-             [else
-              (loop (cdr p) (cons (cdr p) visited))])))))
-    (let loop ([moves moves] [loops '()])
-      (cond
-       [(null? moves) loops]
-       [else
-        (let* ([roots (filter (lambda (x) (not (lookup-value x moves)))
-                              (map car moves))]
-               [start (if (null? roots) (caar moves) (car roots))]
-               [path (find moves start)]
-               [moves1 (delete1 path moves)])
-          (loop moves1 (cons path loops)))]))))
-
-;; (find-paths '([x . y] [y . z] [z . x] [u . v] [v . u]))
-;; (find-paths '([x . y] [y . z] [z . t] [u . v] [v . u]))
-;; (find-paths '([r1 . r2] [r2 . r3] [r3 . r1] [r4 . r5] [r5 . r4]))
-;; (find-paths '([r1 . r2] [r2 . r3] [r3 . r1] [r4 . r5] [r5 . r4] [r5 . fv0]))
-
-
-(define unique-value?
-  (lambda (x renv fenv)
-    (let* ([name (or (lookup-value x renv)
-                     (lookup-value x fenv))]
-           [v1 (lookup name renv)]
-           [v2 (lookup name fenv)])
-      (or (and v1 (not v2))
-          (and (not v1) v2)))))
-
-
-
-;; shuffle is a parallel copy
-;; the temp location should be outside of the shuffled sets
-(define shuffle
-  (lambda (moves renv fenv)
-    (define shuffle1
-      (lambda (path renv fenv)
-        (letv* ([temp (or (find-register (difference general-registers
-                                                     (map cdr moves)) renv)
-                          (find-frame fenv (find-frame-offset moves)))]
-                [(ins0 renv fenv) (if (unique-value? (cadr path) renv fenv)
-                                      (copy temp (cadr path) renv fenv)
-                                      (values '() renv fenv))])
-          (let loop ([nodes (cdr path)]
-                     [ins ins0]
-                     [renv renv]
-                     [fenv fenv])
-            (cond
-             [(and (null? (cdr nodes)) (cycle? path))
-              (letv* ([(ins+ renv fenv) (copy (car nodes) temp renv fenv)])
-                (values (append ins ins+)
-                        (delete-values `(,temp) renv)
-                        (delete-values `(,temp) fenv)))]
-             [(null? (cdr nodes))
-              (values ins renv fenv)]
-             [else
-              (letv* ([(ins+ renv fenv) (copy (car nodes) (cadr nodes) renv fenv)])
-                (loop (cdr nodes) (append ins ins+) renv fenv))])))))
-    (let ([paths (find-paths moves)])
-      (let loop ([paths paths] [ins '()] [renv renv] [fenv fenv])
-        (cond
-         [(null? paths)
-          (values ins renv fenv)]
-         [else
-          (letv* ([(ins+ renv fenv) (shuffle1 (car paths) renv fenv)])
-            (loop (cdr paths) (append ins ins+) renv fenv))])))))
-
-; (shuffle '([r8 . r9] [r9 . r8]) '([x.1 . r8] [y.2 . r9]) '())
-; (shuffle '([r8 . r9] [r9 . r10]) '([x.1 . r8] [y.2 . r9] [z.3 . r10]) '())
-
-
-
-
-;-------------------------------------------------------------
-;                       main allocator
-;-------------------------------------------------------------
-
-(define find-moves
-  (lambda (env1 env2)
-    (let loop ([env1 env1])
-      (cond
-       [(null? env1) '()]
-       [(assq (caar env1) env2)
-        => (lambda (p)
-             (cond
-              [(eq? (cdar env1) (cdr p))   ; same value, no need to move
-               (loop (cdr env1))]
-              [else
-               (cons (cons (cdar env1) (cdr p))
-                     (loop (cdr env1)))]))]
-       [else
-        (loop (cdr env1))]))))
-
-;; (find-moves '([x . 1] [y . 3])
-;;             '([x . 1] [y . 4]))
-
-
-
-(define find-frame-offset
-  (lambda (fenv)
-    (let* ([take-offset (lambda (p)
-                          (if (frame-var? (cdr p))
-                              (frame-var->index (cdr p))
-                              -1))]
-           [indices (map take-offset fenv)])
-      (add1 (apply max (cons -1 indices))))))
-
-;; (find-frame-offset '([y.2 . fv0] [x.3 . r2] [t.4 . fv4]))
-
-
-
-(define parameter-bindings
-  (lambda (vars regs offset)
-    (let loop ([vars vars]
-               [regs regs]
-               [fidx offset]
-               [renv '()]
-               [fenv '()])
-      (cond
-       [(null? vars)
-        (values renv fenv)]
-       [(null? regs)
-        (loop (cdr vars)
-              regs
-              (add1 fidx)
-              renv
-              (cons `(,(car vars) . ,(index->frame-var fidx)) fenv))]
-       [else
-        (loop (cdr vars)
-              (cdr regs)
-              fidx
-              (cons `(,(car vars) . ,(car regs)) renv)
-              fenv)]))))
-
-;; (parameter-bindings '(x y z) '(r8 r9) 0)
-
-
-
-
-;; rewrite the term with the assignments in env
-(define rewrite
-  (lambda (exp env)
-    (match exp
-      [(begin ,[(lambda (x) (rewrite x env)) -> ef*] ...)
-       `(begin ,ef* ...)]
-      [(if ,test ,conseq ,alt)
-       `(if ,(rewrite test env)
-            ,(rewrite conseq env)
-            ,(rewrite alt env))]
-      [(set! ,x ,v)
-       `(set! ,(rewrite x env)
-              ,(rewrite v env))]
-      [(mset! ,x ,y ,v)
-       `(mset! ,(rewrite x env)
-               ,(rewrite y env)
-               ,(rewrite v env))]
-      [(mref ,x ,y)
-       `(mref ,(rewrite x env)
-              ,(rewrite y env))]
-      [(,fun ,arg* ...)
-       (map (lambda (x) (rewrite x env)) `(,fun ,arg* ...))]
-      [,x (guard (or (uvar? x) (label? x)))
-          (cond
-           [(lookup x env) => (lambda (v) v)]
-           [else x])]
-      [,x x])))
-
-;; (rewrite '(set! (+ y.2 z.3)) '([x.1 . r0] [z.3 . r1] [y.2 . r2]))
-
-
-
-(define adjust-frame-pointer
-  (lambda (offset)
-    (cond
-     [(zero? offset) '()]
-     [(> offset 0)
-      `((set! ,frame-pointer-register
-              (+ ,frame-pointer-register ,(fxsll offset align-shift))))]
-     [else
-      `((set! ,frame-pointer-register
-              (- ,frame-pointer-register ,(fxsll (- offset) align-shift))))])))
-
-
-
-(define range
-  (lambda (start end)
-    (cond
-     [(< end start) '()]
-     [else
-      (cons start (range (add1 start) end))])))
-
-
-
-(define translate
-  (lambda (x renv fenv)
-    (or (lookup x renv)
-        (lookup x fenv)
-        x)))
-
-
-
-(define make-moves
-  (lambda (moves renv fenv)
-    (let ([moves1 (map (lambda (p) (cons (translate (car p) renv fenv)
-                                         (cdr p)))
-                       moves)])
-      (filter (lambda (p) (not (eq? (car p) (cdr p)))) moves1))))
-
-
-
-(define allocate-registers
-  (lambda (x)
-    (define alloc
-      (lambda (exp renv fenv ct)
-        (match exp
-          [((nop)) (values '() '() renv fenv)]
-          [((end ,v* ...))
-           (values '() '() (delete v* renv) (delete v* fenv))]
-          [((begin ,e* ...))
-           (alloc `(,e* ...) renv fenv ct)]
-          [((if ,test ,conseq ,alt))
-           (letv* ([(ins1 vt renv1 fenv1) (alloc `(,test) renv fenv 'test)]
-                   [(ins2 vc renv2 fenv2) (alloc `(,conseq) renv1 fenv1 ct)]
-                   [(ins3 va renv3 fenv3) (alloc `(,alt) renv1 fenv1 ct)]
-                   [(ins4 renv4 fenv4) (shuffle (find-moves renv2 renv3)
-                                                renv2 fenv2)])
-             (values ins1
-                     `((if ,@vt
-                           ,(make-begin (append ins2 vc ins4))
-                           ,(make-begin (append ins3 va))))
-                     renv4 fenv4))]
-          [((set! ,x ,y (,end* ...)))
-           (letv* ([(ins1 vy renv1 fenv1) (alloc `(,y) renv fenv 'rhs)]
-                   [(ins2 renv2 fenv2) (load-var `(,x)
-                                                 (delete end* renv1)
-                                                 (delete end* fenv1))])
-             (values (append ins1 ins2)
-                     `((set! ,(rewrite x renv2) ,@vy))
-                     renv2 fenv2))]
-          [((mset! ,x ,y ,z (,end* ...)))
-           (letv* ([(ins1 renv1 fenv1) (load-var `(,x ,y ,z) renv fenv)])
-             (values ins1
-                     `(,(rewrite `(mset! ,x ,y ,z) renv1))
-                     (delete end* renv1)
-                     (delete end* fenv1)))]
-          [((,fun ,arg* ... (,end* ...))) (guard (and (not (binop? fun))
-                                                      (not (relop? fun))))
-           (letv* ([call-live* (if (eq? ct 'tail)
-                                   '()
-                                   (map car (delete end* (append renv fenv))))]
-                   [live-fv* (map index->frame-var
-                                  (range 0 (sub1 (length call-live*))))]
-                   [move-live* (map cons call-live* live-fv*)]
-                   [offset (length call-live*)]
-                   [(rmove fmove) (parameter-bindings
-                                   arg* parameter-registers offset)]
-                   [label (unique-label 'ret)]
-                   [move-ret* (if (eq? ct 'tail)
-                                  `(($ret . ,return-address-register))
-                                  `((,label . ,return-address-register)))]
-                   [moves (make-moves (append rmove fmove move-ret* move-live*)
-                                      renv fenv)]
-                   [(ins1 renv1 fenv1) (shuffle moves renv fenv)]
-                   [jump (rewrite `((,fun)) (append renv1 fenv1))]
-                   [call (if (eq? ct 'tail)
-                             (append ins1 jump)
-                             `((return-point ,label
-                                             ,(make-begin
-                                               `(,@ins1
-                                                 ,@(adjust-frame-pointer offset)
-                                                 ,@jump)))
-                               ,@(adjust-frame-pointer (- offset))))])
-             (peek fun arg* end* call-live* moves renv fenv renv1 fenv1 ins1)
-             (values call
-                     (if (eq? ct 'rhs) `(,return-value-register) '())
-                     '()
-                     (delete (cons label end*) fenv1)))]
-          [(,x) (guard (eq? ct 'tail))
-           (letv* ([retaddr (or (lookup '$ret renv) (lookup '$ret fenv))]
-                   [(ins1 v1 renv1 fenv1) (alloc `(,x) renv fenv 'rhs)])
-             (values `(,@ins1
-                       (set! ,return-value-register ,@v1)
-                       (,retaddr))
-                     '()
-                     renv1 fenv1))]
-          [((,op ,x ,y (,end* ...)))
-           (letv* ([(ins1 renv1 fenv1) (load-var `(,x ,y) renv fenv)])
-             (values ins1
-                     `(,(rewrite `(,op ,x ,y) renv1))
-                     (delete end* renv1)
-                     (delete end* fenv1)))]
-          [(,e1 ,e2 ,e* ...)
-           (letv* ([(ins1 v1 renv1 fenv1) (alloc `(,e1) renv fenv 'nontail)]
-                   [(ins2 v2 renv2 fenv2) (alloc `(,e2 ,e* ...) renv1 fenv1 ct)])
-             (values (append ins1 v1 ins2) v2 renv2 fenv2))]
-          [(,x)
-           (values '() (rewrite `(,x) (append renv fenv)) renv fenv)])))
-    (match x
-      [(letrec ([,u* ,[(lambda (x) (allocate-registers x)) -> e*]] ...)
-         (locals (,v* ...)
-           ,body))
-       (letv* ([marked-body (mark-ends `(,body))]
-               [renv0 (occupy '$ret return-address-register '())]
-               [(ins1 body^ renv1 fenv1) (alloc marked-body renv0 '() 'tail)])
-         `(letrec ([,u* ,e*] ...) ,(make-begin (append ins1 body^))))]
-      [(lambda (,x* ...)
-         (locals (,v* ...)
-           ,body))
-       (letv* ([marked-body (mark-ends `(,body))]
-               [(renv0 fenv0) (parameter-bindings x* parameter-registers 0)]
-               [renv0 (occupy '$ret return-address-register renv0)]
-               [(ins1 body^ renv1 fenv1) (alloc marked-body renv0 fenv0 'tail)])
-         `(lambda () ,(make-begin (append ins1 body^))))])))
-
-
-
-;; need at least three registers (because of mset!)
-(define general-registers
-  `(r8 r9 r10 r11 r12 r13 r14 r15))
-
-(define registers general-registers)
-
-(define parameter-registers `(r8 r9))
-
-(define *debug* #f)
-
-
-
-
-;-------------------------------------------------------------
-;                         tests
-;-------------------------------------------------------------
-
-(allocate-registers
- '(letrec ([iota-fill!$3 (lambda (cp.7 v.6 i.5 n.4)
-                           (locals (t.20 t.19 t.18 t.17 t.16)
-                             (if (< i.5 n.4)
-                                 (begin
-                                   (set! t.20 (+ 0 i.5))
-                                   (mset! v.6 t.20 i.5)
-                                   (set! t.19 (+ i.5 8))
-                                   (set! t.16 (mref cp.7 6))
-                                   (set! t.17 (mref t.16 -2))
-                                   (set! t.18 (mref cp.7 6))
-                                   (t.17 t.18 v.6 t.19 n.4))
-                                 30)))])
-    (locals (n.1 v.2 t.10 t.11 iota-fill!.3 t.8 t.15 t.14 t.13 t.12)
-      (begin
-        (set! n.1 32)
-        (set! t.10 n.1)
-        (set! t.14 (+ 8 t.10))
-        (set! t.15 rdx)
-        (set! rdx (+ rdx t.14))
-        (set! t.11 (+ t.15 3))
-        (mset! t.11 -3 t.10)
-        (set! v.2 t.11)
-        (set! t.13 rdx)
-        (set! rdx (+ rdx 16))
-        (set! t.8 (+ t.13 2))
-        (mset! t.8 -2 iota-fill!$3)
-        (set! iota-fill!.3 t.8)
-        (mset! iota-fill!.3 6 iota-fill!.3)
-        (set! t.12 (mref iota-fill!.3 -2))
-        (t.12 iota-fill!.3 v.2 0 n.1)
-        v.2))))
-
-
-(mark-ends
- '(begin
-    (set! t.20 (n.1 0 1 2 5 i.5))
-    (mset! v.6 t.20 i.5)
-    (set! t.19 (+ i.5 8))
-    (set! t.16 (mref cp.7 6))
-    (set! t.17 (mref t.16 -2))
-    (set! t.18 (mref cp.7 6))
-    (t.17 t.18 v.6 t.19 n.4)))
-
-
-(mark-ends
- '(begin
-    (set! t.20 (n.1 0 1 2 5 i.5))
-    (mset! v.6 t.20 i.5)
-    (set! t.19 (+ i.5 8))
-    (set! t.16 (mref cp.7 6))
-    (set! t.17 (mref t.16 -2))
-    (set! t.18 (mref cp.7 6))
-    (t.17 t.18 v.6 t.19 n.4)))
-
-
-(allocate-registers
- '(letrec ()
-    (locals ()
-      (if (> z.1 0)
-          (begin
-            (set! x.2 1)
-            (set! y.3 2)
-            (set! u.6 3)
-            (set! t.4 (+ x.2 y.3))
-            (set! f.5 0))
-          (begin
-            (set! y.3 2)
-            (set! x.2 1))))))
-
-
-
-(allocate-registers
- '(letrec ()
-    (locals ()
-      (begin
-        (if (> 0 0)
-            (begin
-              (set! x.1 1)
-              (set! y.2 2))
-            (begin
-              (set! y.2 1)
-              (set! x.1 2)))
-        (+ x.1 y.2)))))
-
-(test-one
- '(letrec ([f (lambda (x) (+ x 1))])
-    (f 2)))
-
-
-
-(allocate-registers
- '(letrec ()
-    (locals ()
-      (begin
-        (set! f.2 0)
-        (set! x.1 1)
-        (set! x.1 (+ x.1 2))
-        (f.2 x.1)))))
-
-
-
-(compiler-passes '(
-  parse-scheme
-  convert-complex-datum
-  uncover-assigned
-  purify-letrec
-  pre-optimize
-  convert-assignments
-  optimize-direct-call
-  remove-anonymous-lambda
-  sanitize-binding-forms
-;  uncover-free
-  convert-closures
-  analyze-closure-size ;;;
-;  optimize-known-call
-  introduce-procedure-primitives
-  lift-letrec
-  normalize-context
-  specify-representation
-  uncover-locals
-  remove-let
-  verify-uil
-  remove-complex-opera*
-
-  impose-calling-conventions
-  uncover-frame-conflict
-  pre-assign-frame
-  assign-new-frame
-  (iterate
-   finalize-frame-locations
-   select-instructions
-   uncover-register-conflict
-   assign-registers
-   (break when everybody-home?)
-   assign-frame)
-  finalize-locations
-
-;;  allocate-registers
-
-  expose-frame-var
-  expose-basic-blocks
-  optimize-jumps
-  flatten-program
-;  analyze-code-size ;;;
-;  generate-x86-64  ;; turn it on only on 64-bit machines
-))
-
-
-(compiler-passes '(
-  parse-scheme
-  convert-complex-datum
-  uncover-assigned
-  purify-letrec
-  pre-optimize
-  convert-assignments
-  optimize-direct-call
-  remove-anonymous-lambda
-  sanitize-binding-forms
-;  uncover-free
-  convert-closures
-  analyze-closure-size ;;;
-;  optimize-known-call
-  introduce-procedure-primitives
-  lift-letrec
-  normalize-context
-  specify-representation
-  uncover-locals
-  remove-let
-  verify-uil
-  remove-complex-opera*
-
-  ;; impose-calling-conventions
-  ;; uncover-frame-conflict
-  ;; pre-assign-frame
-  ;; assign-new-frame
-  ;; (iterate
-  ;;  finalize-frame-locations
-  ;;  select-instructions
-  ;;  uncover-register-conflict
-  ;;  assign-registers
-  ;;  (break when everybody-home?)
-  ;;  assign-frame)
-  ;; finalize-locations
-
-  allocate-registers
-
-  expose-frame-var
-  expose-basic-blocks
-  optimize-jumps
-  flatten-program
-;  analyze-code-size ;;;
-;  generate-x86-64  ;; turn it on only on 64-bit machines
-))
-
-
-
-(allocate-registers
- '(letrec ([iota-fill!$3 (lambda (v.6 i.5 n.4)
-                           (locals (t.13 t.12)
-                             (if (< i.5 n.4)
-                                 (begin
-                                   (set! t.13 (+ 5 i.5))
-                                   (mset! v.6 t.13 i.5)
-                                   (set! t.12 (+ i.5 8))
-                                   (iota-fill!$3 v.6 t.12 n.4))
-                                 30)))])
-    (locals (n.1 v.2 t.8 t.9 t.11 t.10)
-      (begin
-        (set! n.1 32)
-        (set! t.8 n.1)
-        (set! t.10 (+ 8 t.8))
-        (set! t.11 rdx)
-        (set! rdx (+ rdx t.10))
-        (set! t.9 (+ t.11 3))
-        (mset! t.9 -3 t.8)
-        (set! v.2 t.9)
-        (iota-fill!$3 v.2 0 n.1)
-        v.2))))
-
-
-
-(letrec ([sum$1 (lambda ()
-                  (begin
-                    (set! r9 (logand r8 7))
-                    (if (= r9 1)
-                        (begin
-                          (set! r9 (mref r8 -1))
-                          (set! r8 (mref r8 7))
-                          (return-point ret$98
-                            (begin
-                              (set! fv1 r9)
-                              (set! fv0 r15)
-                              (set! r15 ret$98)
-                              (set! rbp (+ rbp 16))
-                              (sum$1)))
-                          (set! rbp (- rbp 16))
-                          (set! r8 rax)
-                          (set! r9 fv1)
-                          (set! rax (+ r9 r8))
-                          (fv0))
-                        (begin (set! rax 0) (r15)))))]
-         [selector$2 (lambda ()
-                       (if (= r9 22)
-                           (begin (set! rax 0) (r15))
-                           (begin
-                             (set! r10 (mref r9 -1))
-                             (return-point ret$95
-                               (begin
-                                 (set! fv3 fv1)
-                                 (set! fv1 r8)
-                                 (set! fv2 r15)
-                                 (set! r15 ret$95)
-                                 (set! fv4 fv0)
-                                 (set! fv0 r9)
-                                 (set! r9 r10)
-                                 (set! rbp (+ rbp 40))
-                                 (list-ref$7)))
-                             (set! rbp (- rbp 40))
-                             (set! r8 rax)
-                             (set! r9 (mref r8 -2))
-                             (set! r10 fv4)
-                             (set! r11 (mref r10 -1))
-                             (set! r12 fv3)
-                             (set! r13 (mref r12 -1))
-                             (return-point ret$96
-                               (begin
-                                 (set! fv5 r10)
-                                 (set! fv4 fv2)
-                                 (set! fv2 r12)
-                                 (set! fv3 fv1)
-                                 (set! fv1 r12)
-                                 (set! fv6 fv0)
-                                 (set! fv0 r10)
-                                 (set! r15 ret$96)
-                                 (set! fv7 r13)
-                                 (set! r14 r9)
-                                 (set! r9 r11)
-                                 (set! rbp (+ rbp 56))
-                                 (r14)))
-                             (set! rbp (- rbp 56))
-                             (set! r8 rax)
-                             (set! r9 fv6)
-                             (set! r9 (mref r9 7))
-                             (set! r10 fv0)
-                             (set! r10 (mref r10 7))
-                             (set! r11 fv1)
-                             (set! r11 (mref r11 7))
-                             (return-point ret$97
-                               (begin
-                                 (set! fv1 fv4)
-                                 (set! r15 ret$97)
-                                 (set! fv2 r10)
-                                 (set! fv0 r8)
-                                 (set! r8 fv3)
-                                 (set! fv3 r11)
-                                 (set! rbp (+ rbp 16))
-                                 (selector$2)))
-                             (set! rbp (- rbp 16))
-                             (set! r8 rax)
-                             (set! r9 rdx)
-                             (set! rdx (+ rdx 16))
-                             (set! r9 (+ r9 1))
-                             (set! r10 fv0)
-                             (mset! r9 -1 r10)
-                             (mset! r9 7 r8)
-                             (set! rax r9)
-                             (fv1))))]
-         [expt$3 (lambda ()
-                   (begin
-                     (set! r10 fv0)
-                     (if (= r10 0)
-                         (begin (set! rax 8) (r15))
-                         (begin
-                           (set! r11 (sra r9 3))
-                           (set! r10 (- r10 8))
-                           (return-point ret$94
-                             (begin
-                               (set! fv1 r11)
-                               (set! fv0 r15)
-                               (set! r15 ret$94)
-                               (set! fv2 r10)
-                               (set! rbp (+ rbp 16))
-                               (expt$3)))
-                           (set! rbp (- rbp 16))
-                           (set! r8 rax)
-                           (set! r9 fv1)
-                           (set! rax (* r9 r8))
-                           (fv0)))))]
-         [mult$4 (lambda ()
-                   (begin
-                     (set! r9 (sra r9 3))
-                     (set! r10 fv0)
-                     (set! rax (* r9 r10))
-                     (r15)))]
-         [sub$5 (lambda ()
-                  (begin (set! r10 fv0) (set! rax (- r9 r10)) (r15)))]
-         [add$6 (lambda ()
-                  (begin (set! r10 fv0) (set! rax (+ r9 r10)) (r15)))]
-         [list-ref$7 (lambda ()
-                       (if (= r9 0)
-                           (begin
-                             (set! r8 (mref r8 -1))
-                             (set! rax r8)
-                             (r15))
-                           (begin
-                             (set! r8 (mref r8 7))
-                             (set! r9 (- r9 8))
-                             (list-ref$7))))])
-  (begin
-    (set! r8 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r8 (+ r8 1))
-    (mset! r8 -1 8)
-    (mset! r8 7 22)
-    (set! r8 r8)
-    (set! r9 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r9 (+ r9 1))
-    (mset! r9 -1 24)
-    (mset! r9 7 r8)
-    (set! r8 r9)
-    (set! r9 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r9 (+ r9 1))
-    (mset! r9 -1 72)
-    (mset! r9 7 22)
-    (set! r9 r9)
-    (set! r10 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r10 (+ r10 1))
-    (mset! r10 -1 40)
-    (mset! r10 7 r9)
-    (set! r9 r10)
-    (set! r10 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r10 (+ r10 1))
-    (mset! r10 -1 0)
-    (mset! r10 7 22)
-    (set! r10 r10)
-    (set! r11 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r11 (+ r11 1))
-    (mset! r11 -1 16)
-    (mset! r11 7 r10)
-    (set! r10 r11)
-    (set! r11 rdx)
-    (set! rdx (+ rdx 8))
-    (set! r11 (+ r11 2))
-    (set! r12 expt$3)
-    (mset! r11 -2 r12)
-    (set! r11 r11)
-    (set! r13 rdx)
-    (set! rdx (+ rdx 8))
-    (set! r13 (+ r13 2))
-    (set! r14 mult$4)
-    (mset! r13 -2 r14)
-    (set! r13 r13)
-    (set! fv0 r15)
-    (set! r15 rdx)
-    (set! rdx (+ rdx 8))
-    (set! r15 (+ r15 2))
-    (set! fv1 r8)
-    (mset! r15 -2 r8)
-    (set! r15 r15)
-    (set! fv2 r9)
-    (set! r9 rdx)
-    (set! rdx (+ rdx 8))
-    (set! r9 (+ r9 2))
-    (set! fv3 r10)
-    (mset! r9 -2 r10)
-    (set! r9 r9)
-    (set! r9 r9)
-    (set! r15 r15)
-    (set! r13 r13)
-    (set! r11 r11)
-    (set! fv4 r12)
-    (set! r12 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r12 (+ r12 1))
-    (mset! r12 -1 r11)
-    (mset! r12 7 22)
-    (set! r11 r12)
-    (set! r12 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r12 (+ r12 1))
-    (mset! r12 -1 r13)
-    (mset! r12 7 r11)
-    (set! r11 r12)
-    (set! r12 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r12 (+ r12 1))
-    (mset! r12 -1 r15)
-    (mset! r12 7 r11)
-    (set! r11 r12)
-    (set! r12 rdx)
-    (set! rdx (+ rdx 16))
-    (set! r12 (+ r12 1))
-    (mset! r12 -1 r9)
-    (mset! r12 7 r11)
-    (set! r9 r12)
-    (return-point ret$99
-      (begin
-        (set! fv5 fv2)
-        (set! fv2 r10)
-        (set! fv6 fv1)
-        (set! fv1 r8)
-        (set! r8 r9)
-        (set! r9 fv3)
-        (set! fv3 fv0)
-        (set! fv0 r14)
-        (set! r15 ret$99)
-        (set! rbp (+ rbp 40))
-        (selector$2)))
-    (set! rbp (- rbp 40))
-    (set! r8 rax)
-    (set! r15 fv3)
-    (sum$1)))
-
-
-
-(test-one
- '(letrec ([list-ref (lambda (ls offset)
-                       (if (= offset 0)
-                           (car ls)
-                           (list-ref (cdr ls) (- offset 1))))]
-           [add (lambda (v w) (+ v w))]
-           [sub (lambda (v w) (- v w))]
-           [mult (lambda (v w) (* v w))]
-           [expt (lambda (v w) (if (= w 0) 1 (* v (expt v (- w 1)))))]
-           [selector (lambda (op* sel rand1 rand2)
-                       (if (null? sel)
-                           0
-                           (cons
-                            ((list-ref op* (car sel))
-                             (car rand1)
-                             (car rand2))
-                            (selector
-                             op*
-                             (cdr sel)
-                             (cdr rand1)
-                             (cdr rand2)))))]
-           [sum (lambda (ls)
-                  (if (pair? ls) (+ (car ls) (sum (cdr ls))) 0))])
-    (sum (selector
-          (cons add (cons sub (cons mult ())))
-          '(0 1)
-          '(5 9)
-          '(3 1)))))
-
-
-
-(allocate-registers
- '(letrec ([dec$2 (lambda (cp.4)
-                  (locals (t.14 t.13 t.12 t.11)
-                    (begin
-                      (set! t.11 (mref cp.4 6))
-                      (set! t.12 (mref cp.4 6))
-                      (set! t.13 (mref t.12 -4))
-                      (set! t.14 (- t.13 8))
-                      (mset! t.11 -4 t.14)
-                      30)))])
-  (locals (x.3 x.1 t.7 t.6 dec.2 t.5 t.10 t.9 t.8)
-    (begin
-      (set! x.3 0)
-      (set! t.7 x.3)
-      (set! t.10 rdx)
-      (set! rdx (+ rdx 8))
-      (set! t.6 (+ t.10 4))
-      (mset! t.6 -4 t.7)
-      (set! x.1 t.6)
-      (set! t.9 rdx)
-      (set! rdx (+ rdx 16))
-      (set! t.5 (+ t.9 2))
-      (mset! t.5 -2 dec$2)
-      (set! dec.2 t.5)
-      (mset! dec.2 6 x.1)
-      (dec$2 dec.2)
-      (dec$2 dec.2)
-      (dec$2 dec.2)
-      (set! t.8 (mref x.1 -4))
-      t.8))))
-
-
-
-(test-one
- '(let ([x 0])
-    (letrec ([dec (lambda () (set! x (- x 1)))])
-      (dec)
-      (dec)
-      (dec)
-      x)))
+;; (test-one (nth 107 tests))
 
