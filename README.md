@@ -26,8 +26,8 @@ Some truly beautiful code. They are extremely short, yet extremely powerful.
 
 * lazy-ski.ss - compiler from lambda calculus to "lazy combinators"
 
-* encoding.scm - encodings of various things in the lambda calculus,
-  used by some other code (e.g. lazy-ski.ss)
+* encoding.scm - "church encoding" of various things in the lambda
+  calculus, used by some other code (e.g. lazy-ski.ss)
 
 * pmatch.scm - supporting macro for pattern matching, used by some
   other programs here (compatible with most Scheme implementations)
