@@ -30,6 +30,11 @@
       [(? number? x) x]
       [`(lambda (,x) ,e)
        (Closure exp env)]
+      [`(if ,test ,conseq ,alt)
+       (let ([v0 (interp1 test env)])
+         (if v0 
+             (interp1 conseq env)
+             (interp1 alt env)))]
       [`(,e1 ,e2)
        (let ([v1 (interp1 e1 env)]
              [v2 (interp1 e2 env)])
@@ -45,7 +50,8 @@
            ['+ (+ v1 v2)]
            ['- (- v1 v2)]
            ['* (* v1 v2)]
-           ['/ (/ v1 v2)]))]
+           ['/ (/ v1 v2)]
+           ['= (= v1 v2)]))]
       [else
        (error "unrecognized expression") exp])))
 
@@ -79,3 +85,9 @@
 
 ;; (interp '(1 2))
 ;; => ERROR: trying to apply non-function 1
+
+(interp '(if (= 1 1) 0 1))
+;; => 1
+
+(interp '(if (= 1 2) 0 1))
+;; => 1

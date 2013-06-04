@@ -26,6 +26,10 @@ Some truly beautiful code. They are extremely short, yet extremely powerful.
 
 * lazy-ski.ss - compiler from lambda calculus to "lazy combinators"
 
+* cek.ss - a "reversible" CEK abstract machine which can run forwards
+  and backwards, and change directions any any time. I wrote it as one
+  night's research.
+
 * encoding.scm - "church encoding" of various things in the lambda
   calculus, used by some other code (e.g. lazy-ski.ss)
 
