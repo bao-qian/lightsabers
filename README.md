@@ -7,10 +7,10 @@
   to any level
 
 * infer.ss - Hindly-Milner style type inferencer for lambda calculus
-  (without polymorphic types)
+  (without let-polymorphism)
 
-* mk-c.ss - modified implementation of the logic language miniKanren
-  with constraint-based negation operator
+* mk-c.ss - modified implementation of the logic language miniKanren with a
+  constraint-based negation operator
 
 * interp-call-by-value.ss - simple call-by-value interpreter
 
@@ -24,7 +24,7 @@
 * lazy-ski.ss - compiler from lambda calculus to "lazy combinators"
 
 * cek.ss - a "reversible" CEK abstract machine which can run forwards and
-  backwards, and change directions any any time. This is one night's research.
+  backwards and change directions any any time. One night's research.
 
 * encoding.scm - "church encoding" of various things in the lambda
   calculus, used by some other code (e.g. lazy-ski.ss)
