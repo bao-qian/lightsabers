@@ -1,7 +1,5 @@
-Some truly beautiful code. They are extremely short, yet extremely powerful.
-
-* cps.ss - advanced CPS transformer (without administrative redexes,
-  with treatment for conditionals and tail-calls)
+* cps.ss - CPS transformer without administrative redexes (10+ years of
+  research, finished independently as a weekly homework)
 
 * compiler.ss - optimizing compiler from Scheme to X64 assembly
 
@@ -18,17 +16,15 @@ Some truly beautiful code. They are extremely short, yet extremely powerful.
 
 * interp-call-by-name.ss - simple call-by-name interpreter
 
-* interp-lazy.ss - interpreter with lazy semantics (similar to
-  Haskell)
+* interp-lazy.ss - interpreter with lazy semantics
 
 * interp-delim.ss - simple interpreter with delimited continuation
   operators (shift/reset/shift0/reset0)
 
 * lazy-ski.ss - compiler from lambda calculus to "lazy combinators"
 
-* cek.ss - a "reversible" CEK abstract machine which can run forwards
-  and backwards, and change directions any any time. I wrote it as one
-  night's research.
+* cek.ss - a "reversible" CEK abstract machine which can run forwards and
+  backwards, and change directions any any time. This is one night's research.
 
 * encoding.scm - "church encoding" of various things in the lambda
   calculus, used by some other code (e.g. lazy-ski.ss)
