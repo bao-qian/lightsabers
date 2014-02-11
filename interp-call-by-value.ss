@@ -53,7 +53,7 @@
            ['/ (/ v1 v2)]
            ['= (= v1 v2)]))]
       [else
-       (error "unrecognized expression") exp])))
+       (error "unrecognized expression" exp)])))
 
 
 
